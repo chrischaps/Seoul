@@ -7,7 +7,7 @@ use std::sync::mpsc::Receiver;
 use anyhow::{Context, Result, anyhow};
 use arrayvec::ArrayVec;
 use notify::RecommendedWatcher;
-use rand::Rng;
+use rand::RngExt;
 use tracing::{info, warn};
 
 use crate::audio::AudioFeatures;
@@ -260,10 +260,10 @@ impl PresetLibrary {
             return;
         }
         let cur = self.state.destination();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut pick = cur;
         while pick == cur {
-            pick = rng.gen_range(0..self.presets.len());
+            pick = rng.random_range(0..self.presets.len());
         }
         self.state.begin_transition(pick);
     }

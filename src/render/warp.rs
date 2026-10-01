@@ -33,7 +33,7 @@ impl WarpPass {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -114,8 +114,8 @@ impl WarpPass {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("seoul.warp.layout"),
-            bind_group_layouts: &[&texture_layout, &decay_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&texture_layout), Some(&decay_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -124,7 +124,7 @@ impl WarpPass {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_warp"),
-                buffers: &[WarpMesh::vertex_layout()],
+                buffers: &[Some(WarpMesh::vertex_layout())],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -143,7 +143,7 @@ impl WarpPass {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -176,6 +176,7 @@ impl WarpPass {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
@@ -184,6 +185,7 @@ impl WarpPass {
             depth_stencil_attachment: None,
             occlusion_query_set: None,
             timestamp_writes: None,
+            multiview_mask: None,
         });
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.texture_bgs[read_idx], &[]);

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleFormat, Stream};
+use cpal::{FromSample, I24, Sample, SampleFormat, SizedSample, Stream};
 use ringbuf::HeapRb;
 use ringbuf::traits::{Producer, Split};
 use tracing::{info, warn};
@@ -28,12 +28,12 @@ pub fn start_capture() -> Result<CaptureHandle> {
         .default_output_config()
         .context("default_output_config failed on default output device")?;
 
-    let sample_rate = config.sample_rate().0;
+    let sample_rate = config.sample_rate();
     let channels = config.channels();
     let sample_format = config.sample_format();
 
     info!(
-        device = %device.name().unwrap_or_else(|_| "?".into()),
+        device = %device,
         sample_rate,
         channels,
         ?sample_format,
@@ -41,30 +41,19 @@ pub fn start_capture() -> Result<CaptureHandle> {
     );
 
     let rb = HeapRb::<f32>::new(RING_CAPACITY);
-    let (mut producer, consumer) = rb.split();
+    let (producer, consumer) = rb.split();
 
-    let stream_config: cpal::StreamConfig = config.clone().into();
-    let err_fn = |err| warn!(?err, "audio stream error");
+    let stream_config: cpal::StreamConfig = config.into();
 
+    // cpal 0.18 can report I32/F64/I24 defaults on high-precision hardware,
+    // so dispatch every format WASAPI may hand us to one generic downmixer.
     let stream = match sample_format {
-        SampleFormat::F32 => device.build_input_stream(
-            &stream_config,
-            move |data: &[f32], _| push_mono_f32(&mut producer, data, channels),
-            err_fn,
-            None,
-        )?,
-        SampleFormat::I16 => device.build_input_stream(
-            &stream_config,
-            move |data: &[i16], _| push_mono_i16(&mut producer, data, channels),
-            err_fn,
-            None,
-        )?,
-        SampleFormat::U16 => device.build_input_stream(
-            &stream_config,
-            move |data: &[u16], _| push_mono_u16(&mut producer, data, channels),
-            err_fn,
-            None,
-        )?,
+        SampleFormat::F32 => build::<f32>(&device, stream_config, producer, channels)?,
+        SampleFormat::F64 => build::<f64>(&device, stream_config, producer, channels)?,
+        SampleFormat::I16 => build::<i16>(&device, stream_config, producer, channels)?,
+        SampleFormat::I24 => build::<I24>(&device, stream_config, producer, channels)?,
+        SampleFormat::I32 => build::<i32>(&device, stream_config, producer, channels)?,
+        SampleFormat::U16 => build::<u16>(&device, stream_config, producer, channels)?,
         other => return Err(anyhow!("unsupported sample format: {other:?}")),
     };
 
@@ -77,48 +66,39 @@ pub fn start_capture() -> Result<CaptureHandle> {
     })
 }
 
-#[inline]
-fn push_mono_f32(producer: &mut ProdHeap, data: &[f32], channels: u16) {
-    let ch = channels as usize;
-    if ch <= 1 {
-        producer.push_slice(data);
-        return;
-    }
-    for frame in data.chunks_exact(ch) {
-        let mut sum = 0.0f32;
-        for s in frame {
-            sum += *s;
-        }
-        if producer.try_push(sum / ch as f32).is_err() {
-            break;
-        }
-    }
+fn build<T>(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    mut producer: ProdHeap,
+    channels: u16,
+) -> Result<Stream>
+where
+    T: SizedSample,
+    f32: FromSample<T>,
+{
+    let err_fn = |err| warn!(?err, "audio stream error");
+    let stream = device.build_input_stream(
+        config,
+        move |data: &[T], _| push_mono(&mut producer, data, channels),
+        err_fn,
+        None,
+    )?;
+    Ok(stream)
 }
 
+/// Downmix interleaved frames to mono f32 and push into the ring. Drops the
+/// remainder of the callback if the analysis thread has fallen behind.
 #[inline]
-fn push_mono_i16(producer: &mut ProdHeap, data: &[i16], channels: u16) {
-    let ch = channels as usize;
-    let scale = 1.0 / i16::MAX as f32;
+fn push_mono<T>(producer: &mut ProdHeap, data: &[T], channels: u16)
+where
+    T: Sample,
+    f32: FromSample<T>,
+{
+    let ch = channels.max(1) as usize;
+    let inv = 1.0 / ch as f32;
     for frame in data.chunks_exact(ch) {
-        let mut sum = 0.0f32;
-        for s in frame {
-            sum += *s as f32 * scale;
-        }
-        if producer.try_push(sum / ch as f32).is_err() {
-            break;
-        }
-    }
-}
-
-#[inline]
-fn push_mono_u16(producer: &mut ProdHeap, data: &[u16], channels: u16) {
-    let ch = channels as usize;
-    for frame in data.chunks_exact(ch) {
-        let mut sum = 0.0f32;
-        for s in frame {
-            sum += (*s as f32 - 32768.0) / 32768.0;
-        }
-        if producer.try_push(sum / ch as f32).is_err() {
+        let sum: f32 = frame.iter().map(|&s| f32::from_sample(s)).sum();
+        if producer.try_push(sum * inv).is_err() {
             break;
         }
     }

@@ -28,6 +28,7 @@ struct App {
     features: Output<AudioFeatures>,
     _stream: Stream,
     fullscreen: bool,
+    reconfigure: bool,
 }
 
 impl App {
@@ -55,14 +56,24 @@ impl App {
         let features = *self.features.read();
 
         let frame = match ctx.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(f) => f,
+            wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
+                // Render this frame, reconfigure before the next one.
+                self.reconfigure = true;
+                f
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 ctx.surface.configure(&ctx.device, &ctx.config);
                 window.request_redraw();
                 return;
             }
-            Err(e) => {
-                error!(?e, "surface acquire failed");
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                window.request_redraw();
+                return;
+            }
+            other => {
+                error!(?other, "surface acquire failed");
+                window.request_redraw();
                 return;
             }
         };
@@ -71,7 +82,10 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         renderer.render(ctx, &view, &features);
-        frame.present();
+        ctx.queue.present(frame);
+        if std::mem::take(&mut self.reconfigure) {
+            ctx.surface.configure(&ctx.device, &ctx.config);
+        }
 
         window.request_redraw();
     }
@@ -186,6 +200,7 @@ fn main() -> Result<()> {
         features,
         _stream: stream,
         fullscreen: false,
+        reconfigure: false,
     };
 
     event_loop.run_app(&mut app)?;

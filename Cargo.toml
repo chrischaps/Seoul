@@ -4,22 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu = "25"
+wgpu = "30"
 winit = "0.30"
-cpal = "0.15"
+cpal = "0.18"
 realfft = "3"
-ringbuf = "0.4"
-triple_buffer = "8"
+ringbuf = "0.5"
+triple_buffer = "9"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-notify = "6"
+toml = "1"
+notify = "8"
 arrayvec = "0.7"
-rand = "0.8"
+rand = "0.10"
 
 [profile.release]
 lto = "thin"

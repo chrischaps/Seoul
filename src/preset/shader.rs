@@ -37,8 +37,8 @@ impl CompositeLayouts {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("seoul.composite.pipeline_layout"),
-            bind_group_layouts: &[&audio_layout, &palette_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&audio_layout), Some(&palette_layout)],
+            immediate_size: 0,
         });
 
         Self {
@@ -87,12 +87,12 @@ pub fn compile_composite_shader(
 
     // We push our own validation error scope so a bad preset shader returns
     // an error instead of panicking the device.
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(&label),
         source: wgpu::ShaderSource::Wgsl(combined.into()),
     });
-    let err = pollster::block_on(device.pop_error_scope());
+    let err = pollster::block_on(scope.pop());
     if let Some(e) = err {
         return Err(anyhow::anyhow!(
             "shader compile failed for '{label_hint}': {e}"
@@ -143,7 +143,7 @@ pub fn build_composite_pipeline(
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }
