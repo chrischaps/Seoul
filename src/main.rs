@@ -117,6 +117,11 @@ impl App {
         };
 
         let features = *self.features.read();
+        let status = match &self.audio {
+            AudioInput::Synth => "synth test track".to_owned(),
+            AudioInput::Loopback(c) => c.device_name().map_or_else(|| "no audio — retrying".to_owned(), str::to_owned),
+        };
+        renderer.hud_mut().set_audio_status(&status);
 
         let frame = match ctx.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
@@ -200,62 +205,89 @@ impl App {
         self.fullscreen = !self.fullscreen;
         let target = monitor.and_then(|i| event_loop.available_monitors().nth(i));
         window.set_fullscreen(self.fullscreen.then_some(Fullscreen::Borderless(target)));
+        // Nothing to click in a visualizer; keep the pointer out of the art.
+        window.set_cursor_visible(!self.fullscreen);
     }
 
     fn on_key(&mut self, event_loop: &ActiveEventLoop, kc: KeyCode) {
-        let monitor = self.config.monitor;
-        let lib = self.renderer.as_mut().map(|r| r.library_mut());
-        match (kc, lib) {
-            (KeyCode::Escape, _) => event_loop.exit(),
-            (KeyCode::F11, _) => self.toggle_fullscreen_on(monitor, event_loop),
-            (KeyCode::KeyP, _) => self.screenshot_requested = true,
-            (KeyCode::KeyF, Some(lib)) => {
-                let on = lib.toggle_favorite();
-                info!(preset = lib.current_name(), favorite = on, "favorite");
-            }
-            (KeyCode::KeyX, Some(lib)) => {
-                let name = lib.current_name().to_owned();
-                let hidden = lib.toggle_hidden();
-                info!(preset = name, hidden, "hide");
-            }
-            (KeyCode::KeyL, Some(lib)) => {
-                let on = lib.toggle_locked();
-                info!(preset = lib.current_name(), locked = on, "lock");
-            }
-            (
-                KeyCode::Digit1
-                | KeyCode::Digit2
-                | KeyCode::Digit3
-                | KeyCode::Digit4
-                | KeyCode::Digit5
-                | KeyCode::Digit6
-                | KeyCode::Digit7
-                | KeyCode::Digit8
-                | KeyCode::Digit9,
-                Some(lib),
-            ) => {
-                let n = kc as usize - KeyCode::Digit1 as usize;
-                if lib.jump_favorite(n) {
-                    info!(preset = lib.current_name(), "favorite {}", n + 1);
-                }
-            }
-            (KeyCode::Space, Some(lib)) => {
-                lib.next();
-                info!(preset = lib.current_name(), "next");
-            }
-            (KeyCode::Backspace, Some(lib)) => {
-                lib.prev();
-                info!(preset = lib.current_name(), "prev");
-            }
-            (KeyCode::KeyR, Some(lib)) => {
-                lib.random();
-                info!(preset = lib.current_name(), "random");
-            }
-            (KeyCode::KeyA, Some(lib)) => {
-                let on = lib.toggle_auto_advance();
-                info!(auto_advance = on, "auto-advance");
+        match kc {
+            KeyCode::Escape => return event_loop.exit(),
+            KeyCode::F11 => return self.toggle_fullscreen_on(self.config.monitor, event_loop),
+            KeyCode::KeyP => {
+                self.screenshot_requested = true;
+                return;
             }
             _ => {}
+        }
+        let Some(r) = self.renderer.as_mut() else {
+            return;
+        };
+        let notice: Option<String> = match kc {
+            KeyCode::Space => {
+                r.library_mut().next();
+                None
+            }
+            KeyCode::Backspace => {
+                r.library_mut().prev();
+                None
+            }
+            KeyCode::KeyR => {
+                r.library_mut().random();
+                None
+            }
+            KeyCode::KeyA => {
+                let on = r.library_mut().toggle_auto_advance();
+                Some(format!("Auto-advance {}", if on { "on" } else { "off" }))
+            }
+            KeyCode::KeyF => {
+                let on = r.library_mut().toggle_favorite();
+                let name = r.library().current_name();
+                Some(if on {
+                    format!("★  {name} added to favorites")
+                } else {
+                    format!("{name} removed from favorites")
+                })
+            }
+            KeyCode::KeyX => {
+                let name = r.library().current_name().to_owned();
+                let hidden = r.library_mut().toggle_hidden();
+                Some(if hidden { format!("{name} hidden") } else { format!("{name} unhidden") })
+            }
+            KeyCode::KeyL => {
+                let on = r.library_mut().toggle_locked();
+                Some(if on { "Locked — auto-advance paused".into() } else { "Unlocked".into() })
+            }
+            KeyCode::KeyH => {
+                let hud = r.hud_mut();
+                hud.show_help = !hud.show_help;
+                None
+            }
+            KeyCode::F1 => {
+                let hud = r.hud_mut();
+                hud.show_stats = !hud.show_stats;
+                None
+            }
+            KeyCode::Digit1
+            | KeyCode::Digit2
+            | KeyCode::Digit3
+            | KeyCode::Digit4
+            | KeyCode::Digit5
+            | KeyCode::Digit6
+            | KeyCode::Digit7
+            | KeyCode::Digit8
+            | KeyCode::Digit9 => {
+                let n = kc as usize - KeyCode::Digit1 as usize;
+                if r.library_mut().jump_favorite(n) {
+                    None
+                } else {
+                    Some(format!("No favorite #{} yet — press F to add one", n + 1))
+                }
+            }
+            _ => None,
+        };
+        info!(preset = r.library().current_name(), key = ?kc, "key");
+        if let Some(text) = notice {
+            r.hud_mut().notice(text);
         }
     }
 }
@@ -277,8 +309,20 @@ impl ApplicationHandler for App {
             render_scale: self.args.render_scale.unwrap_or(self.config.render_scale),
             library: library_settings(&self.config, &self.args),
             curation: Curation::load(&PathBuf::from(STATE_PATH)),
+            ui_scale: window.scale_factor(),
         };
         let mut renderer = Renderer::new(&ctx, &PathBuf::from("presets"), opts).expect("failed to load presets");
+        {
+            let hud = renderer.hud_mut();
+            hud.enabled = self.config.hud.enabled;
+            hud.show_stats = self.config.hud.stats;
+            hud.toast_seconds = self.config.hud.toast_seconds;
+            if self.args.tour.is_some() {
+                // Clean frames for preset review.
+                hud.enabled = false;
+                hud.skip_intro();
+            }
+        }
 
         if let Some(name) = self.args.preset.as_ref().or(self.config.start_preset.as_ref()) {
             match renderer.library().find(name) {
@@ -307,6 +351,11 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if let Some(r) = self.renderer.as_mut() {
+                    r.hud_mut().set_scale(scale_factor);
+                }
+            }
             WindowEvent::Resized(size) => {
                 if let Some(ctx) = self.ctx.as_mut() {
                     ctx.resize(size);

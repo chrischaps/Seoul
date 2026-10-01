@@ -26,7 +26,7 @@ cargo run --release -- --help
 Windows-only: audio capture uses the WASAPI host explicitly. There is no cross-platform audio path.
 
 ### Runtime keys
-Space = next · Backspace = prev · R = shuffle · A = auto-advance · L = lock current · F = favorite · X = hide · 1–9 = jump to favorite · P = screenshot · F11 = fullscreen · Esc = quit.
+Space = next · Backspace = prev · R = shuffle · A = auto-advance · L = lock current · F = favorite · X = hide · 1–9 = jump to favorite · H = help · F1 = stats · P = screenshot (includes HUD) · F11 = fullscreen · Esc = quit.
 
 ### Settings
 `seoul.toml` (repo root, or `--config`) holds start preset, fullscreen/monitor, render scale, `[auto]` interval, `[transition]` style/duration, global `[post]` defaults and `[hud]`; it hot-reloads. CLI flags override it (`--auto 8`, `--transition dissolve`, …). Favorites/hidden persist by name in `seoul-state.toml` (gitignored).
@@ -49,6 +49,8 @@ Two ping-pong `Rgba16Float` feedback textures (`render/feedback.rs`) follow the 
    - **Particles** (`render/particles.rs` + `shaders/particles_*.wgsl`) — if any active preset has `[particles]`, a compute pass advects up to 131k particles through curl noise with audio forces, and instanced sprites are added into the feedback (so they trail).
 2. **Composite pass** (`preset/shader.rs`) — one or two fullscreen draws that **additively** blend the preset's `fs_composite` output on top of the warped feedback (`src = Constant, dst = One`). The blend constant carries transition intensity × frame-time normalization.
 3. **Post** (`render/post.rs` + `shaders/bloom.wgsl`, `shaders/post.wgsl`) — mip-chain bloom, then display-only mirror/kaleidoscope symmetry and MilkDrop-style video echo, exposure/saturation → Khronos PBR Neutral tonemap → vignette, grain, dither, optional chromatic aberration and LED-panel mask, into the sRGB swapchain.
+
+4. **HUD** (`render/hud.rs` + `shaders/hud.wgsl`) — glyphon text (Bahnschrift / Malgun Gothic / Consolas loaded straight from `C:\Windows\Fonts`, nothing bundled) plus instanced SDF rounded rects: startup 서울 wordmark, preset toasts, key notices, help, stats meters, and a persistent panel for preset compile errors. Drawn after tonemapping so it never blooms.
 
 Textures then swap (`feedback.swap()`), so next frame's warp reads what this frame wrote.
 

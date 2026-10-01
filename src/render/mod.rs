@@ -1,6 +1,7 @@
 pub mod context;
 pub mod feedback;
 pub mod gpu;
+pub mod hud;
 pub mod mask;
 pub mod particles;
 pub mod post;

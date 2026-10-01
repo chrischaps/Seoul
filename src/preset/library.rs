@@ -215,7 +215,6 @@ impl PresetLibrary {
     }
 
     /// Most recent preset load/compile error, cleared by the next success.
-    #[allow(dead_code)] // surfaced by the HUD
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
@@ -381,7 +380,6 @@ impl PresetLibrary {
     }
 
     /// Transition progress 0..1, if one is running.
-    #[allow(dead_code)] // read by the HUD
     pub fn transition_progress(&self) -> Option<f32> {
         match self.state {
             PresetState::Transitioning { progress, .. } => Some(progress),

@@ -15,6 +15,7 @@ use crate::preset::shader::{CompositeLayouts, palette_layout};
 use crate::render::context::RenderContext;
 use crate::render::feedback::{FeedbackTextures, feedback_size};
 use crate::render::gpu;
+use crate::render::hud::{Hud, HudInput};
 use crate::render::mask::{MaskPass, MaskSlot};
 use crate::render::particles::{ParticleFrame, ParticleSystem};
 use crate::render::post::PostPass;
@@ -25,6 +26,8 @@ pub struct RendererOptions {
     pub render_scale: f32,
     pub library: LibrarySettings,
     pub curation: Curation,
+    /// Window DPI scale for the HUD.
+    pub ui_scale: f64,
 }
 
 pub struct Renderer {
@@ -35,6 +38,7 @@ pub struct Renderer {
     mask: MaskPass,
     particles: ParticleSystem,
     post: PostPass,
+    hud: Hud,
     library: PresetLibrary,
     surface_format: wgpu::TextureFormat,
     output_size: (u32, u32),
@@ -42,7 +46,6 @@ pub struct Renderer {
     start_time: Instant,
     last_render_time: Option<Instant>,
     frame: u64,
-    last_features: AudioFeatures,
 }
 
 impl Renderer {
@@ -88,6 +91,7 @@ impl Renderer {
         let mask = MaskPass::new(device);
         let particles = ParticleSystem::new(device, &audio_layout, &palette_layout)?;
         let post = PostPass::new(device, ctx.config.format, feedback.views(), feedback.size());
+        let hud = Hud::new(device, &ctx.queue, ctx.config.format, opts.ui_scale);
 
         let layouts = PresetLayouts {
             composite: CompositeLayouts::new(device, &audio_layout, &palette_layout),
@@ -103,6 +107,7 @@ impl Renderer {
             mask,
             particles,
             post,
+            hud,
             library,
             surface_format: ctx.config.format,
             output_size,
@@ -110,7 +115,6 @@ impl Renderer {
             start_time: Instant::now(),
             last_render_time: None,
             frame: 0,
-            last_features: AudioFeatures::default(),
         })
     }
 
@@ -122,11 +126,10 @@ impl Renderer {
         &mut self.library
     }
 
-    /// The features used for the most recent frame (clock fields stamped).
-    #[allow(dead_code)] // read by the HUD
-    pub fn last_features(&self) -> &AudioFeatures {
-        &self.last_features
+    pub fn hud_mut(&mut self) -> &mut Hud {
+        &mut self.hud
     }
+
 
     /// Track the window size. The feedback loop follows it (× render scale);
     /// the current image is resampled into the new textures so a resize
@@ -176,7 +179,6 @@ impl Renderer {
         f.resolution = [fw as f32, fh as f32];
         f.aspect = fw as f32 / fh as f32;
         self.frame += 1;
-        self.last_features = f;
 
         // Hot-reload any preset changes before evaluating.
         self.library.poll_reloads(&ctx.device);
@@ -257,7 +259,22 @@ impl Renderer {
         // Pass 3: bloom + tonemap into the swapchain.
         self.post.render(&mut encoder, swap_view, write_idx);
 
+        // Pass 4: HUD over the finished frame.
+        let lib = &self.library;
+        let input = HudInput {
+            features: &f,
+            preset: lib.current(),
+            favorite: lib.is_favorite(),
+            locked: lib.is_locked(),
+            auto: lib.auto_advance(),
+            transition: lib.transition_progress(),
+            error: lib.last_error(),
+        };
+        self.hud.prepare(&ctx.device, &ctx.queue, self.output_size, dt, &input);
+        self.hud.render(&mut encoder, swap_view);
+
         ctx.queue.submit(Some(encoder.finish()));
+        self.hud.trim();
         self.feedback.swap();
     }
 
@@ -268,8 +285,10 @@ impl Renderer {
         let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("seoul.screenshot"),
         });
-        // After `swap`, the read texture is the one this frame wrote.
+        // After `swap`, the read texture is the one this frame wrote. The
+        // HUD is still prepared from that frame, so it lands in the shot too.
         self.post.render(&mut encoder, &target.view, self.feedback.read_index());
+        self.hud.render(&mut encoder, &target.view);
         ctx.queue.submit(Some(encoder.finish()));
         target.save_png(&ctx.device, &ctx.queue, path)
     }
