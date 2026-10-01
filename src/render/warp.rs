@@ -1,8 +1,10 @@
 //! Pass 1: resample the previous frame through the warp transform.
 
+use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::preset::shader::compile_wgsl;
 use crate::render::feedback::FEEDBACK_FORMAT;
 use crate::render::gpu;
 
@@ -89,28 +91,6 @@ impl Default for WarpParams {
 }
 
 impl WarpParams {
-    pub fn lerp(a: &Self, b: &Self, t: f32) -> Self {
-        let l = |x: f32, y: f32| x + (y - x) * t;
-        Self {
-            zoom: l(a.zoom, b.zoom),
-            rotation: l(a.rotation, b.rotation),
-            warp_amount: l(a.warp_amount, b.warp_amount),
-            decay: l(a.decay, b.decay),
-            cx: l(a.cx, b.cx),
-            cy: l(a.cy, b.cy),
-            dx: l(a.dx, b.dx),
-            dy: l(a.dy, b.dy),
-            sx: l(a.sx, b.sx),
-            sy: l(a.sy, b.sy),
-            warp_scale: l(a.warp_scale, b.warp_scale),
-            warp_speed: l(a.warp_speed, b.warp_speed),
-            hue_shift: l(a.hue_shift, b.hue_shift),
-            blur: l(a.blur, b.blur),
-            sharpen: l(a.sharpen, b.sharpen),
-            edge: if t < 0.5 { a.edge } else { b.edge },
-        }
-    }
-
     /// Convert to GPU uniforms for a frame that took `dt` seconds.
     ///
     /// Multiplicative per-frame quantities (decay, zoom, stretch) are raised
@@ -171,33 +151,135 @@ pub struct WarpUniforms {
 
 const _: () = assert!(std::mem::size_of::<WarpUniforms>() == 80);
 
-pub struct WarpPass {
-    pipeline: wgpu::RenderPipeline,
-    texture_layout: wgpu::BindGroupLayout,
-    uniform_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    texture_bgs: [wgpu::BindGroup; 2],
-    uniform_buf: wgpu::Buffer,
-    uniform_bg: wgpu::BindGroup,
-    _identity_buf: wgpu::Buffer,
-    identity_bg: wgpu::BindGroup,
+/// common.wgsl + warp_prelude.wgsl: prepended to every warp shader.
+pub const WARP_PRELUDE: &str = concat!(
+    include_str!("../../shaders/common.wgsl"),
+    "\n",
+    include_str!("../../shaders/warp_prelude.wgsl"),
+);
+const DEFAULT_WARP: &str = include_str!("../../shaders/warp_default.wgsl");
+
+/// Bind group layouts shared by the built-in warp and every custom one:
+/// 0 = prev frame + sampler, 1 = warp uniforms, 2 = audio, 3 = palette.
+#[derive(Clone)]
+pub struct WarpLayouts {
+    texture: wgpu::BindGroupLayout,
+    uniform: wgpu::BindGroupLayout,
+    palette: wgpu::BindGroupLayout,
+    pipeline: wgpu::PipelineLayout,
 }
 
-impl WarpPass {
-    pub fn new(device: &wgpu::Device, feedback_views: &[wgpu::TextureView; 2]) -> Self {
-        let shader = gpu::shader_module(device, "seoul.warp.wgsl", include_str!("../../shaders/warp.wgsl"));
-        let sampler = gpu::linear_clamp_sampler(device, "seoul.warp.sampler");
-
-        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+impl WarpLayouts {
+    pub fn new(device: &wgpu::Device, audio: &wgpu::BindGroupLayout, palette: &wgpu::BindGroupLayout) -> Self {
+        let texture = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seoul.warp.tex.bgl"),
             entries: &[gpu::texture_entry(0), gpu::sampler_entry(1)],
         });
-        let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let uniform = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seoul.warp.uniform.bgl"),
             entries: &[gpu::uniform_entry(0)],
         });
+        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("seoul.warp.pipeline_layout"),
+            bind_group_layouts: &[Some(&texture), Some(&uniform), Some(audio), Some(palette)],
+            immediate_size: 0,
+        });
+        Self {
+            texture,
+            uniform,
+            palette: palette.clone(),
+            pipeline,
+        }
+    }
+}
 
-        let make_uniform = |label: &str, u: WarpUniforms| {
+/// Compile a warp shader body (built-in or a preset's) into a pipeline.
+/// Validation failures come back as `Err`, never a device panic.
+pub fn build_warp_pipeline(
+    device: &wgpu::Device,
+    layouts: &WarpLayouts,
+    body: &str,
+    label: &str,
+    file: &str,
+) -> Result<wgpu::RenderPipeline> {
+    let module = compile_wgsl(device, WARP_PRELUDE, body, &format!("seoul.warp.shader.{label}"), file)?;
+    // Each warp draw adds `weight × warped image` into a cleared target, so
+    // a transition can crossfade two presets' feedback dynamics.
+    let blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Constant,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent::REPLACE,
+    };
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(&format!("seoul.warp.pipeline.{label}")),
+        layout: Some(&layouts.pipeline),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_warp"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_warp"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: FEEDBACK_FORMAT,
+                blend: Some(blend),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    if let Some(e) = pollster::block_on(scope.pop()) {
+        return Err(anyhow!("warp pipeline for '{label}' failed: {e}"));
+    }
+    Ok(pipeline)
+}
+
+/// One weighted warp draw for this frame.
+pub struct WarpDraw<'a> {
+    /// `None` = built-in warp.
+    pub pipeline: Option<&'a wgpu::RenderPipeline>,
+    pub uniforms: WarpUniforms,
+    pub weight: f32,
+    pub palette_bg: &'a wgpu::BindGroup,
+}
+
+struct UniformSlot {
+    buf: wgpu::Buffer,
+    bg: wgpu::BindGroup,
+}
+
+pub struct WarpPass {
+    layouts: WarpLayouts,
+    default_pipeline: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
+    texture_bgs: [wgpu::BindGroup; 2],
+    /// One uniform buffer per simultaneous warp draw (two during transitions).
+    slots: [UniformSlot; 2],
+    identity: UniformSlot,
+    _neutral_palette: wgpu::Buffer,
+    neutral_palette_bg: wgpu::BindGroup,
+}
+
+impl WarpPass {
+    pub fn new(device: &wgpu::Device, feedback_views: &[wgpu::TextureView; 2], layouts: WarpLayouts) -> Result<Self> {
+        let sampler = gpu::linear_clamp_sampler(device, "seoul.warp.sampler");
+        let default_pipeline = build_warp_pipeline(device, &layouts, DEFAULT_WARP, "builtin", "shaders/warp_default.wgsl")?;
+
+        let slot = |label: &str, u: WarpUniforms| {
             let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
                 contents: bytemuck::bytes_of(&u),
@@ -205,50 +287,50 @@ impl WarpPass {
             });
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
-                layout: &uniform_layout,
+                layout: &layouts.uniform,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: buf.as_entire_binding(),
                 }],
             });
-            (buf, bg)
+            UniformSlot { buf, bg }
         };
-        let identity = WarpParams {
+        let identity_params = WarpParams {
             edge: EdgeMode::Clamp,
             ..Default::default()
         };
         // dt = 1/60 → k = 1, i.e. exactly the identity transform.
-        let (uniform_buf, uniform_bg) =
-            make_uniform("seoul.warp.uniforms", identity.to_uniforms(1.0 / 60.0, 0.0, 1.0, (1, 1)));
-        let (identity_buf, identity_bg) =
-            make_uniform("seoul.warp.identity", identity.to_uniforms(1.0 / 60.0, 0.0, 1.0, (1, 1)));
+        let identity_u = identity_params.to_uniforms(1.0 / 60.0, 0.0, 1.0, (1, 1));
+        let slots = [slot("seoul.warp.uniforms.0", identity_u), slot("seoul.warp.uniforms.1", identity_u)];
+        let identity = slot("seoul.warp.identity", identity_u);
 
-        let pipeline = gpu::fullscreen_pipeline(
-            device,
-            gpu::FullscreenPipeline {
-                label: "seoul.warp.pipeline",
-                module: &shader,
-                vs: "vs_warp",
-                fs: "fs_warp",
-                layouts: &[&texture_layout, &uniform_layout],
-                format: FEEDBACK_FORMAT,
-                blend: None,
-            },
-        );
+        // The resample path has no preset, but the layout still wants a palette.
+        let neutral_palette = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("seoul.warp.neutral_palette"),
+            contents: &[0u8; 64],
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let neutral_palette_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("seoul.warp.neutral_palette"),
+            layout: &layouts.palette,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: neutral_palette.as_entire_binding(),
+            }],
+        });
 
-        let texture_bgs = Self::make_texture_bgs(device, &texture_layout, &sampler, feedback_views);
+        let texture_bgs = Self::make_texture_bgs(device, &layouts.texture, &sampler, feedback_views);
 
-        Self {
-            pipeline,
-            texture_layout,
-            uniform_layout,
+        Ok(Self {
+            layouts,
+            default_pipeline,
             sampler,
             texture_bgs,
-            uniform_buf,
-            uniform_bg,
-            _identity_buf: identity_buf,
-            identity_bg,
-        }
+            slots,
+            identity,
+            _neutral_palette: neutral_palette,
+            neutral_palette_bg,
+        })
     }
 
     fn make_texture_bgs(
@@ -283,35 +365,36 @@ impl WarpPass {
         })
     }
 
-    /// Layouts for building custom warp pipelines (group 0: prev + sampler,
-    /// group 1: warp uniforms).
-    pub fn layouts(&self) -> [&wgpu::BindGroupLayout; 2] {
-        [&self.texture_layout, &self.uniform_layout]
-    }
-
     /// Rebuild bind groups after the feedback textures were recreated.
     pub fn rebind(&mut self, device: &wgpu::Device, views: &[wgpu::TextureView; 2]) {
-        self.texture_bgs = Self::make_texture_bgs(device, &self.texture_layout, &self.sampler, views);
+        self.texture_bgs = Self::make_texture_bgs(device, &self.layouts.texture, &self.sampler, views);
     }
 
-    pub fn update(&self, queue: &wgpu::Queue, u: &WarpUniforms) {
-        queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(u));
-    }
-
-    /// Warp the `read_idx` feedback texture into `target`. `custom` replaces
-    /// the built-in warp with a preset's own pipeline (same layouts).
+    /// Warp the `read_idx` feedback texture into `target`: one weighted draw
+    /// per active preset, summed into a cleared target.
     pub fn render(
         &self,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         read_idx: usize,
-        custom: Option<&wgpu::RenderPipeline>,
+        audio_bg: &wgpu::BindGroup,
+        draws: &[WarpDraw],
     ) {
+        for (slot, draw) in self.slots.iter().zip(draws) {
+            queue.write_buffer(&slot.buf, 0, bytemuck::bytes_of(&draw.uniforms));
+        }
         let mut rpass = gpu::color_pass(encoder, "seoul.warp.pass", target, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
-        rpass.set_pipeline(custom.unwrap_or(&self.pipeline));
         rpass.set_bind_group(0, &self.texture_bgs[read_idx], &[]);
-        rpass.set_bind_group(1, &self.uniform_bg, &[]);
-        rpass.draw(0..3, 0..1);
+        rpass.set_bind_group(2, audio_bg, &[]);
+        for (slot, draw) in self.slots.iter().zip(draws) {
+            let w = draw.weight as f64;
+            rpass.set_blend_constant(wgpu::Color { r: w, g: w, b: w, a: w });
+            rpass.set_pipeline(draw.pipeline.unwrap_or(&self.default_pipeline));
+            rpass.set_bind_group(1, &slot.bg, &[]);
+            rpass.set_bind_group(3, draw.palette_bg, &[]);
+            rpass.draw(0..3, 0..1);
+        }
     }
 
     /// Scaled straight copy of `src` into `dst` — used to carry the image
@@ -322,12 +405,16 @@ impl WarpPass {
         encoder: &mut wgpu::CommandEncoder,
         src: &wgpu::TextureView,
         dst: &wgpu::TextureView,
+        audio_bg: &wgpu::BindGroup,
     ) {
-        let bg = Self::texture_bg(device, &self.texture_layout, &self.sampler, src);
+        let bg = Self::texture_bg(device, &self.layouts.texture, &self.sampler, src);
         let mut rpass = gpu::color_pass(encoder, "seoul.warp.resample", dst, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
-        rpass.set_pipeline(&self.pipeline);
+        rpass.set_blend_constant(wgpu::Color::WHITE);
+        rpass.set_pipeline(&self.default_pipeline);
         rpass.set_bind_group(0, &bg, &[]);
-        rpass.set_bind_group(1, &self.identity_bg, &[]);
+        rpass.set_bind_group(1, &self.identity.bg, &[]);
+        rpass.set_bind_group(2, audio_bg, &[]);
+        rpass.set_bind_group(3, &self.neutral_palette_bg, &[]);
         rpass.draw(0..3, 0..1);
     }
 }

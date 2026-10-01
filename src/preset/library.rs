@@ -19,8 +19,9 @@ use crate::preset::shader::{
 };
 use crate::preset::transition::PresetState;
 use crate::preset::watcher::{self, ReloadEvent};
+use crate::render::particles::{ParticleParams, ParticlePlan};
 use crate::render::post::PostParams;
-use crate::render::warp::WarpParams;
+use crate::render::warp::{WarpLayouts, WarpParams, build_warp_pipeline};
 
 const AUTO_ADVANCE_INTERVAL: f32 = 25.0;
 const AUTO_ADVANCE_BEAT_THRESHOLD: f32 = 0.7;
@@ -30,25 +31,51 @@ const RELOAD_DEBOUNCE: Duration = Duration::from_millis(120);
 pub struct Preset {
     pub spec: PresetSpec,
     pub pipeline: wgpu::RenderPipeline,
+    /// Custom warp, if the preset ships one.
+    pub warp_pipeline: Option<wgpu::RenderPipeline>,
     // Kept alive to back `palette_bg`.
     _palette_buf: wgpu::Buffer,
     pub palette_bg: wgpu::BindGroup,
 }
 
+/// GPU layouts a preset needs to build its pipelines.
+pub struct PresetLayouts {
+    pub composite: CompositeLayouts,
+    pub warp: WarpLayouts,
+}
+
 impl Preset {
-    fn build(device: &wgpu::Device, layouts: &CompositeLayouts, spec: PresetSpec) -> Result<Self> {
+    fn build(device: &wgpu::Device, layouts: &PresetLayouts, spec: PresetSpec) -> Result<Self> {
         let body = std::fs::read_to_string(&spec.composite_path)
             .with_context(|| format!("read composite shader {}", spec.composite_path.display()))?;
         let file = spec.composite_path.display().to_string();
         let shader = compile_composite_shader(device, &body, &spec.name, &file)?;
-        let pipeline = build_composite_pipeline(device, layouts, &shader, &spec.name)?;
-        let (palette_buf, palette_bg) = make_palette_resources(device, layouts, &spec.palette, &spec.name);
+        let pipeline = build_composite_pipeline(device, &layouts.composite, &shader, &spec.name)?;
+
+        let warp_pipeline = match &spec.warp_path {
+            None => None,
+            Some(path) => {
+                let body = std::fs::read_to_string(path)
+                    .with_context(|| format!("read warp shader {}", path.display()))?;
+                let file = path.display().to_string();
+                Some(build_warp_pipeline(device, &layouts.warp, &body, &spec.name, &file)?)
+            }
+        };
+
+        let (palette_buf, palette_bg) =
+            make_palette_resources(device, &layouts.composite, &spec.palette, &spec.name);
         Ok(Self {
             spec,
             pipeline,
+            warp_pipeline,
             _palette_buf: palette_buf,
             palette_bg,
         })
+    }
+
+    fn uses_file(&self, file_name: &std::ffi::OsStr) -> bool {
+        self.spec.composite_path.file_name() == Some(file_name)
+            || self.spec.warp_path.as_ref().and_then(|p| p.file_name()) == Some(file_name)
     }
 }
 
@@ -57,7 +84,7 @@ pub struct PresetLibrary {
     state: PresetState,
     auto_advance: bool,
     last_advance_time: f32,
-    layouts: CompositeLayouts,
+    layouts: PresetLayouts,
     dir: PathBuf,
     post_defaults: PostParams,
     reload_rx: Option<Receiver<ReloadEvent>>,
@@ -68,9 +95,20 @@ pub struct PresetLibrary {
 }
 
 pub struct FramePlan<'a> {
-    pub warp: WarpParams,
+    /// One weighted warp per active preset (two during a transition).
+    pub warps: ArrayVec<WarpStep<'a>, 2>,
     pub post: PostParams,
     pub draws: ArrayVec<CompositeDraw<'a>, 2>,
+    /// Particle layer settings + the palette to color them with.
+    pub particles: Option<(ParticlePlan, &'a wgpu::BindGroup)>,
+}
+
+pub struct WarpStep<'a> {
+    pub params: WarpParams,
+    /// `None` = built-in warp.
+    pub pipeline: Option<&'a wgpu::RenderPipeline>,
+    pub weight: f32,
+    pub palette_bg: &'a wgpu::BindGroup,
 }
 
 pub struct CompositeDraw<'a> {
@@ -83,7 +121,7 @@ impl PresetLibrary {
     pub fn load(
         device: &wgpu::Device,
         dir: &Path,
-        layouts: CompositeLayouts,
+        layouts: PresetLayouts,
         post_defaults: PostParams,
     ) -> Result<Self> {
         let specs = scan_directory(dir)?;
@@ -200,7 +238,7 @@ impl PresetLibrary {
                     .presets
                     .iter()
                     .enumerate()
-                    .filter(|(_, p)| p.spec.composite_path.file_name() == Some(file_name))
+                    .filter(|(_, p)| p.uses_file(file_name))
                     .map(|(i, _)| i)
                     .collect();
                 if indices.is_empty() {
@@ -332,38 +370,59 @@ impl PresetLibrary {
         }
     }
 
-    fn eval(&self, idx: usize, ctx: &EvalContext) -> (WarpParams, PostParams) {
-        let spec = &self.presets[idx].spec;
-        (spec.mapping.eval(ctx, spec.edge), spec.post.apply(&self.post_defaults))
-    }
-
     /// Produce the render work for this frame.
     pub fn frame_plan(&self, features: &AudioFeatures) -> FramePlan<'_> {
         let ctx = EvalContext::new(features);
-        let mut draws = ArrayVec::new();
-        let draw = |idx: usize, intensity: f32| CompositeDraw {
-            pipeline: &self.presets[idx].pipeline,
-            palette_bg: &self.presets[idx].palette_bg,
-            intensity,
-        };
-        match self.state {
-            PresetState::Stable { current } => {
-                let (warp, post) = self.eval(current, &ctx);
-                draws.push(draw(current, 1.0));
-                FramePlan { warp, post, draws }
-            }
+        let active: ArrayVec<(usize, f32), 2> = match self.state {
+            PresetState::Stable { current } => [(current, 1.0)].into_iter().collect(),
             PresetState::Transitioning { from, to, progress } => {
-                let (wa, pa) = self.eval(from, &ctx);
-                let (wb, pb) = self.eval(to, &ctx);
-                draws.push(draw(from, 1.0 - progress));
-                draws.push(draw(to, progress));
-                FramePlan {
-                    warp: WarpParams::lerp(&wa, &wb, progress),
-                    post: PostParams::lerp(&pa, &pb, progress),
-                    draws,
-                }
+                [(from, 1.0 - progress), (to, progress)].into_iter().collect()
+            }
+        };
+
+        let mut plan = FramePlan {
+            warps: ArrayVec::new(),
+            post: PostParams::default(),
+            draws: ArrayVec::new(),
+            particles: None,
+        };
+        let mut post: Option<PostParams> = None;
+        let mut particles: Option<(ParticleParams, f32, &wgpu::BindGroup)> = None;
+        for &(idx, weight) in &active {
+            let p = &self.presets[idx];
+            plan.warps.push(WarpStep {
+                params: p.spec.mapping.eval(&ctx, p.spec.edge),
+                pipeline: p.warp_pipeline.as_ref(),
+                weight,
+                palette_bg: &p.palette_bg,
+            });
+            plan.draws.push(CompositeDraw {
+                pipeline: &p.pipeline,
+                palette_bg: &p.palette_bg,
+                intensity: weight,
+            });
+
+            // Fold post and particles with running weights so a single
+            // active preset passes through unchanged.
+            let this_post = p.spec.post.apply(&self.post_defaults, &ctx);
+            post = Some(match post {
+                None => this_post,
+                Some(prev) => PostParams::lerp(&prev, &this_post, weight),
+            });
+            if let Some(pp) = p.spec.particles {
+                particles = Some(match particles {
+                    None => (pp, weight, &p.palette_bg),
+                    Some((prev, w, bg)) => (
+                        ParticleParams::lerp(&prev, &pp, weight),
+                        w + weight,
+                        if weight >= 0.5 { &p.palette_bg } else { bg },
+                    ),
+                });
             }
         }
+        plan.post = post.unwrap_or(self.post_defaults);
+        plan.particles = particles.map(|(params, weight, bg)| (ParticlePlan { params, weight }, bg));
+        plan
     }
 }
 

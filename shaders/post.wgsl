@@ -9,7 +9,7 @@
 @group(0) @binding(1) var bloom_tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
 
-// Layout matches Rust `PostUniforms` (4 × vec4 = 64 bytes).
+// Layout matches Rust `PostUniforms` (5 × vec4 = 80 bytes).
 struct PostUniforms {
     exposure: f32,
     bloom: f32,
@@ -26,9 +26,14 @@ struct PostUniforms {
     resolution: vec2<f32>,
 
     contrast: f32,
+    echo_alpha: f32,
+    echo_zoom: f32,
+    echo_orient: f32,
+
+    mirror_mode: f32,
+    mirror_n: f32,
     _pad0: f32,
     _pad1: f32,
-    _pad2: f32,
 };
 @group(1) @binding(0) var<uniform> p: PostUniforms;
 
@@ -48,10 +53,48 @@ fn vs_post(@builtin(vertex_index) vid: u32) -> Varying {
 
 const LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-fn hdr_at(uv: vec2<f32>) -> vec3<f32> {
+fn hdr_raw(uv: vec2<f32>) -> vec3<f32> {
     let s = textureSampleLevel(scene, samp, uv, 0.0).rgb;
     let b = textureSampleLevel(bloom_tex, samp, uv, 0.0).rgb;
     return s + b * p.bloom;
+}
+
+// Scene + bloom with MilkDrop-style video echo: a second copy, zoomed about
+// the center and optionally flipped, blended in. Display-only — it never
+// feeds back into the trails.
+fn hdr_at(uv: vec2<f32>) -> vec3<f32> {
+    let base = hdr_raw(uv);
+    if (p.echo_alpha <= 0.0) {
+        return base;
+    }
+    var e = (uv - 0.5) / p.echo_zoom;
+    let o = u32(p.echo_orient);
+    if (o == 1u || o == 3u) { e.x = -e.x; }
+    if (o == 2u || o == 3u) { e.y = -e.y; }
+    let echo = hdr_raw(1.0 - abs(fract((e + 0.5) * 0.5) * 2.0 - 1.0));
+    return mix(base, echo, p.echo_alpha);
+}
+
+// Display-time symmetry, folded in aspect-correct space.
+fn mirror_uv(uv: vec2<f32>) -> vec2<f32> {
+    let mode = u32(p.mirror_mode);
+    if (mode == 0u) {
+        return uv;
+    }
+    var q = uv;
+    if (mode == 1u || mode == 3u) { q.x = 0.5 - abs(q.x - 0.5); }
+    if (mode == 2u || mode == 3u) { q.y = 0.5 + abs(q.y - 0.5); }
+    if (mode == 4u) {
+        let aspect = p.resolution.x / max(p.resolution.y, 1.0);
+        let c = vec2<f32>((uv.x - 0.5) * aspect, uv.y - 0.5);
+        let seg = 6.2831853 / max(p.mirror_n, 2.0);
+        var a = atan2(c.y, c.x);
+        a = a - seg * floor(a / seg);
+        a = min(a, seg - a);
+        let r = length(c);
+        q = vec2<f32>(r * cos(a) / aspect + 0.5, r * sin(a) + 0.5);
+    }
+    return q;
 }
 
 // Khronos PBR Neutral: identity below ~0.76, then a smooth highlight
@@ -101,7 +144,7 @@ fn led_panel(frag: vec2<f32>) -> vec3<f32> {
     let pitch = max(p.led_pitch * p.resolution.y / 1080.0, 3.0);
     let cell = floor(frag / pitch);
     let center = (cell + 0.5) * pitch / p.resolution;
-    let lit = hdr_at(center);
+    let lit = hdr_at(mirror_uv(center));
 
     let local = fract(frag / pitch) - 0.5;
     let r = length(local);
@@ -113,8 +156,8 @@ fn led_panel(frag: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_post(in: Varying) -> @location(0) vec4<f32> {
-    let uv = in.uv;
-    let d = uv - 0.5;
+    let d = in.uv - 0.5;
+    let uv = mirror_uv(in.uv);
 
     var col: vec3<f32>;
     if (p.led_mask > 0.5) {

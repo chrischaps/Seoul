@@ -16,7 +16,32 @@ use wgpu::util::DeviceExt;
 use crate::preset::Palette;
 use crate::render::feedback::FEEDBACK_FORMAT;
 
-pub const COMPOSITE_PRELUDE: &str = include_str!("../../shaders/composite_prelude.wgsl");
+/// common.wgsl + composite_prelude.wgsl: prepended to every preset's
+/// composite shader.
+pub const COMPOSITE_PRELUDE: &str = concat!(
+    include_str!("../../shaders/common.wgsl"),
+    "\n",
+    include_str!("../../shaders/composite_prelude.wgsl"),
+);
+
+/// The palette uniform layout, shared by composite, warp and particle
+/// pipelines. Visible to every stage so particles can color in the vertex
+/// shader.
+pub fn palette_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("seoul.palette.bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
 
 /// Bind group layouts shared across every composite pipeline.
 pub struct CompositeLayouts {
@@ -25,29 +50,19 @@ pub struct CompositeLayouts {
 }
 
 impl CompositeLayouts {
-    pub fn new(device: &wgpu::Device, audio_layout: &wgpu::BindGroupLayout) -> Self {
-        let palette_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("seoul.composite.palette.bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
+    pub fn new(
+        device: &wgpu::Device,
+        audio_layout: &wgpu::BindGroupLayout,
+        palette_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("seoul.composite.pipeline_layout"),
-            bind_group_layouts: &[Some(audio_layout), Some(&palette_layout)],
+            bind_group_layouts: &[Some(audio_layout), Some(palette_layout)],
             immediate_size: 0,
         });
 
         Self {
-            palette_layout,
+            palette_layout: palette_layout.clone(),
             pipeline_layout,
         }
     }

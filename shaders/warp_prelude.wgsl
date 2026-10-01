@@ -1,10 +1,18 @@
-// Feedback warp: resample last frame's image through a per-pixel UV
-// transform, fade it by `decay`, and write it as the base of this frame.
+// Provided to every warp shader (after shaders/common.wgsl): the built-in
+// one (shaders/warp_default.wgsl) and any preset's custom `[shader] warp`
+// file. A custom warp file defines only:
 //
-// Coordinates here are texture space: uv (0,0) is the top-left texel.
-// Every parameter arrives already normalized to "per 1/60 s" by the CPU
-// (see `render/warp.rs::WarpParams::to_uniforms`), so trails look the same
-// at any refresh rate.
+//     @fragment
+//     fn fs_warp(in: Varying) -> @location(0) vec4<f32>
+//
+// It must return last frame's image, transformed however you like and
+// multiplied by `w.decay` — that product is what leaves trails. Coordinates
+// here are TEXTURE space: in.uv (0,0) is the top-left, y points DOWN.
+// `warp_uv(in.uv)` applies the preset's [mapping] transform (zoom, rotation,
+// center, translate, stretch, wobble), so a custom warp can build on it.
+//
+// Every uniform is already normalized to "per 1/60 s", so warps behave the
+// same at any refresh rate.
 
 @group(0) @binding(0) var prev: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
@@ -36,6 +44,8 @@ struct WarpUniforms {
     texel: vec2<f32>,
 };
 @group(1) @binding(0) var<uniform> w: WarpUniforms;
+@group(2) @binding(0) var<storage, read> u: AudioFeatures;
+@group(3) @binding(0) var<uniform> palette: Palette;
 
 struct Varying {
     @builtin(position) pos: vec4<f32>,
@@ -54,8 +64,8 @@ fn vs_warp(@builtin(vertex_index) vid: u32) -> Varying {
 const EDGE_MIRROR: f32 = 0.0;
 const EDGE_FADE: f32 = 1.0;
 
-// Fetch the previous frame with the preset's edge policy. Mirroring keeps
-// zoom-out presets from smearing border pixels inward as streaks.
+// Last frame at texture-space `uv`, honoring the preset's edge policy.
+// Mirroring keeps zoom-out presets from smearing borders inward as streaks.
 fn sample_prev(uv: vec2<f32>) -> vec3<f32> {
     if (w.edge_mode == EDGE_MIRROR) {
         let m = 1.0 - abs(fract(uv * 0.5) * 2.0 - 1.0);
@@ -70,6 +80,32 @@ fn sample_prev(uv: vec2<f32>) -> vec3<f32> {
     return c;
 }
 
+// Average of the four neighbors `r` texels away — for blur/sharpen/edges.
+fn blur4(uv: vec2<f32>, r: f32) -> vec3<f32> {
+    let o = w.texel * r;
+    return (sample_prev(uv + vec2<f32>(o.x, 0.0))
+          + sample_prev(uv - vec2<f32>(o.x, 0.0))
+          + sample_prev(uv + vec2<f32>(0.0, o.y))
+          + sample_prev(uv - vec2<f32>(0.0, o.y))) * 0.25;
+}
+
+// Frame-time factor: multiply any per-frame displacement you add yourself
+// by this so it moves the same distance per second at any refresh rate.
+// (Everything in `w` is already normalized.)
+fn frame_k() -> f32 {
+    return clamp(u.dt * 60.0, 0.0, 6.0);
+}
+
+// Texture-space uv → aspect-correct centered coords with y UP (matching the
+// composite prelude's `centered`), and back.
+fn centered(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>((uv.x - 0.5) * w.aspect, 0.5 - uv.y);
+}
+fn uncentered(c: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(c.x / w.aspect + 0.5, 0.5 - c.y);
+}
+
+// The preset's [mapping] transform: where this pixel samples last frame.
 fn warp_uv(uv: vec2<f32>) -> vec2<f32> {
     // Zoom / stretch / rotate about (cx, cy) in aspect-corrected space so
     // rotation doesn't shear a non-square frame.
@@ -91,31 +127,18 @@ fn warp_uv(uv: vec2<f32>) -> vec2<f32> {
     return src;
 }
 
-// Rotate hue by `a` radians (Rodrigues rotation about the grey axis).
-fn hue_rotate(c: vec3<f32>, a: f32) -> vec3<f32> {
-    let k = vec3<f32>(0.57735027);
-    let cs = cos(a);
-    return c * cs + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - cs);
-}
-
-@fragment
-fn fs_warp(in: Varying) -> @location(0) vec4<f32> {
-    let src = warp_uv(in.uv);
-    var col = sample_prev(src);
-
+// The built-in finishing steps (blur, sharpen, hue drift, decay) for a color
+// already fetched at `src`. Custom warps can call this to stay consistent
+// with the [mapping] knobs, or skip it and do their own thing.
+fn finish(src: vec2<f32>, col_in: vec3<f32>) -> vec4<f32> {
+    var col = col_in;
     if (w.blur != 0.0 || w.sharpen != 0.0) {
-        let o = w.texel;
-        let avg = (sample_prev(src + vec2<f32>(o.x, 0.0))
-                 + sample_prev(src - vec2<f32>(o.x, 0.0))
-                 + sample_prev(src + vec2<f32>(0.0, o.y))
-                 + sample_prev(src - vec2<f32>(0.0, o.y))) * 0.25;
+        let avg = blur4(src, 1.0);
         col = mix(col, avg, clamp(w.blur, 0.0, 1.0));
         col = col + (col - avg) * w.sharpen;
     }
-
     if (w.hue_shift != 0.0) {
         col = hue_rotate(col, w.hue_shift);
     }
-
     return vec4<f32>(max(col, vec3<f32>(0.0)) * w.decay, 1.0);
 }

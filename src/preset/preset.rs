@@ -1,9 +1,9 @@
 //! Preset definition: TOML descriptor + parsed expressions + palette.
 //!
 //! `PresetSpec` is the loaded-and-parsed-but-not-yet-on-GPU form. It owns
-//! the parsed warp mappings as `Expr` trees and the path to the composite
-//! shader. The `Preset` (in library.rs) wraps a spec with the compiled
-//! GPU resources.
+//! the parsed warp mappings as `Expr` trees and the paths to the shaders.
+//! The `Preset` (in library.rs) wraps a spec with the compiled GPU
+//! resources.
 //!
 //! Unknown keys are rejected so a typo like `bloon = 1.0` fails loudly on
 //! hot-reload instead of silently doing nothing.
@@ -15,7 +15,8 @@ use bytemuck::{Pod, Zeroable};
 use serde::Deserialize;
 
 use crate::preset::expr::{self, EvalContext, Expr};
-use crate::render::post::PostParams;
+use crate::render::particles::{ColorMode, ParticleParams, SpawnShape};
+use crate::render::post::{EchoOrient, Mirror, PostParams};
 use crate::render::warp::{EdgeMode, WarpParams};
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +36,8 @@ struct RawPreset {
     palette: Option<RawPalette>,
     #[serde(default)]
     post: RawPost,
+    #[serde(default)]
+    particles: Option<RawParticles>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +64,8 @@ struct RawMapping {
 #[serde(deny_unknown_fields)]
 struct RawShader {
     composite: String,
+    /// Optional custom warp shader (defines `fs_warp`).
+    warp: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,35 +77,97 @@ struct RawPalette {
     color3: [f32; 4],
 }
 
-/// Per-preset overrides of the global post defaults.
-#[derive(Debug, Default, Clone, Copy, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RawPost {
-    pub exposure: Option<f32>,
-    pub bloom: Option<f32>,
-    pub bloom_threshold: Option<f32>,
-    pub chroma: Option<f32>,
-    pub vignette: Option<f32>,
-    pub grain: Option<f32>,
-    pub led_mask: Option<bool>,
-    pub led_pitch: Option<f32>,
-    pub saturation: Option<f32>,
-    pub contrast: Option<f32>,
+/// A `[post]` value: a plain number or an expression string evaluated
+/// every frame (e.g. `chroma = "beat * 0.8"`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum NumOrExpr {
+    Num(f64),
+    Expr(String),
 }
 
-impl RawPost {
-    pub fn apply(&self, base: &PostParams) -> PostParams {
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPost {
+    exposure: Option<NumOrExpr>,
+    bloom: Option<NumOrExpr>,
+    bloom_threshold: Option<NumOrExpr>,
+    chroma: Option<NumOrExpr>,
+    vignette: Option<NumOrExpr>,
+    grain: Option<NumOrExpr>,
+    led_mask: Option<bool>,
+    led_pitch: Option<NumOrExpr>,
+    saturation: Option<NumOrExpr>,
+    contrast: Option<NumOrExpr>,
+    echo_alpha: Option<NumOrExpr>,
+    echo_zoom: Option<NumOrExpr>,
+    echo_orient: Option<String>,
+    mirror: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawParticles {
+    count: Option<u32>,
+    spawn: Option<String>,
+    speed: Option<f32>,
+    flow: Option<f32>,
+    flow_scale: Option<f32>,
+    drag: Option<f32>,
+    size: Option<f32>,
+    life: Option<f32>,
+    /// Palette index 0–3, "ramp" or "spectrum".
+    color: Option<RawColor>,
+    burst: Option<f32>,
+    bass_push: Option<f32>,
+    gravity: Option<f32>,
+    intensity: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawColor {
+    Index(u32),
+    Name(String),
+}
+
+/// Per-preset overrides of the global post defaults, evaluated per frame.
+#[derive(Debug, Default)]
+pub struct PostMapping {
+    exposure: Option<Expr>,
+    bloom: Option<Expr>,
+    bloom_threshold: Option<Expr>,
+    chroma: Option<Expr>,
+    vignette: Option<Expr>,
+    grain: Option<Expr>,
+    led_mask: Option<bool>,
+    led_pitch: Option<Expr>,
+    saturation: Option<Expr>,
+    contrast: Option<Expr>,
+    echo_alpha: Option<Expr>,
+    echo_zoom: Option<Expr>,
+    echo_orient: Option<EchoOrient>,
+    mirror: Option<Mirror>,
+}
+
+impl PostMapping {
+    pub fn apply(&self, base: &PostParams, ctx: &EvalContext) -> PostParams {
+        let v = |e: &Option<Expr>, d: f32| e.as_ref().map_or(d, |e| e.eval(ctx));
         PostParams {
-            exposure: self.exposure.unwrap_or(base.exposure),
-            bloom: self.bloom.unwrap_or(base.bloom),
-            bloom_threshold: self.bloom_threshold.unwrap_or(base.bloom_threshold),
-            chroma: self.chroma.unwrap_or(base.chroma),
-            vignette: self.vignette.unwrap_or(base.vignette),
-            grain: self.grain.unwrap_or(base.grain),
+            exposure: v(&self.exposure, base.exposure),
+            bloom: v(&self.bloom, base.bloom),
+            bloom_threshold: v(&self.bloom_threshold, base.bloom_threshold),
+            chroma: v(&self.chroma, base.chroma),
+            vignette: v(&self.vignette, base.vignette),
+            grain: v(&self.grain, base.grain),
             led_mask: self.led_mask.map_or(base.led_mask, |b| if b { 1.0 } else { 0.0 }),
-            led_pitch: self.led_pitch.unwrap_or(base.led_pitch),
-            saturation: self.saturation.unwrap_or(base.saturation),
-            contrast: self.contrast.unwrap_or(base.contrast),
+            led_pitch: v(&self.led_pitch, base.led_pitch),
+            saturation: v(&self.saturation, base.saturation),
+            contrast: v(&self.contrast, base.contrast),
+            echo_alpha: v(&self.echo_alpha, base.echo_alpha),
+            echo_zoom: v(&self.echo_zoom, base.echo_zoom),
+            echo_orient: self.echo_orient.unwrap_or(base.echo_orient),
+            mirror: self.mirror.unwrap_or(base.mirror),
         }
     }
 }
@@ -112,10 +179,12 @@ pub struct PresetSpec {
     pub description: String,
     pub source_path: PathBuf,
     pub composite_path: PathBuf,
+    pub warp_path: Option<PathBuf>,
     pub mapping: WarpMapping,
     pub edge: EdgeMode,
     pub palette: Palette,
-    pub post: RawPost,
+    pub post: PostMapping,
+    pub particles: Option<ParticleParams>,
 }
 
 #[derive(Debug)]
@@ -190,21 +259,16 @@ impl PresetSpec {
     pub fn parse(text: &str, toml_path: &Path) -> Result<Self> {
         let raw: RawPreset = toml::from_str(text)
             .with_context(|| format!("parse TOML in {}", toml_path.display()))?;
+        let name = raw.name.clone();
 
-        let parse = |name: &str, src: &str| -> Result<Expr> {
+        let parse = |field: &str, src: &str| -> Result<Expr> {
             expr::parse(src).map_err(|e| {
-                anyhow!(
-                    "preset '{}' field '{}' expression error: {} — source: '{}'",
-                    raw.name,
-                    name,
-                    e,
-                    src
-                )
+                anyhow!("preset '{name}' field '{field}' expression error: {e} — source: '{src}'")
             })
         };
         let m = &raw.mapping;
-        let opt = |name: &str, src: &Option<String>, default: &str| -> Result<Expr> {
-            parse(name, src.as_deref().unwrap_or(default))
+        let opt = |field: &str, src: &Option<String>, default: &str| -> Result<Expr> {
+            parse(field, src.as_deref().unwrap_or(default))
         };
 
         let mapping = WarpMapping {
@@ -227,10 +291,51 @@ impl PresetSpec {
 
         let edge = match raw.edge.as_deref() {
             None => EdgeMode::default(),
-            Some(s) => EdgeMode::parse(s).ok_or_else(|| {
-                anyhow!("preset '{}': unknown edge mode '{s}' (mirror|fade|clamp)", raw.name)
-            })?,
+            Some(s) => EdgeMode::parse(s)
+                .ok_or_else(|| anyhow!("preset '{name}': unknown edge mode '{s}' (mirror|fade|clamp)"))?,
         };
+
+        let post_expr = |field: &str, v: &Option<NumOrExpr>| -> Result<Option<Expr>> {
+            Ok(match v {
+                None => None,
+                Some(NumOrExpr::Num(n)) => Some(Expr::Lit(*n as f32)),
+                Some(NumOrExpr::Expr(s)) => Some(parse(&format!("post.{field}"), s)?),
+            })
+        };
+        let rp = &raw.post;
+        let post = PostMapping {
+            exposure: post_expr("exposure", &rp.exposure)?,
+            bloom: post_expr("bloom", &rp.bloom)?,
+            bloom_threshold: post_expr("bloom_threshold", &rp.bloom_threshold)?,
+            chroma: post_expr("chroma", &rp.chroma)?,
+            vignette: post_expr("vignette", &rp.vignette)?,
+            grain: post_expr("grain", &rp.grain)?,
+            led_mask: rp.led_mask,
+            led_pitch: post_expr("led_pitch", &rp.led_pitch)?,
+            saturation: post_expr("saturation", &rp.saturation)?,
+            contrast: post_expr("contrast", &rp.contrast)?,
+            echo_alpha: post_expr("echo_alpha", &rp.echo_alpha)?,
+            echo_zoom: post_expr("echo_zoom", &rp.echo_zoom)?,
+            echo_orient: rp
+                .echo_orient
+                .as_deref()
+                .map(|s| {
+                    EchoOrient::parse(s)
+                        .ok_or_else(|| anyhow!("preset '{name}': echo_orient '{s}' (none|x|y|xy)"))
+                })
+                .transpose()?,
+            mirror: rp
+                .mirror
+                .as_deref()
+                .map(|s| {
+                    Mirror::parse(s).ok_or_else(|| {
+                        anyhow!("preset '{name}': mirror '{s}' (none|x|y|quad|kaleido|kaleido:N)")
+                    })
+                })
+                .transpose()?,
+        };
+
+        let particles = raw.particles.as_ref().map(|rp| parse_particles(&name, rp)).transpose()?;
 
         let palette = match raw.palette {
             Some(p) => Palette {
@@ -239,9 +344,10 @@ impl PresetSpec {
             None => Palette::neutral(),
         };
 
-        // Composite shader path is relative to the preset TOML's directory.
+        // Shader paths are relative to the preset TOML's directory.
         let preset_dir = toml_path.parent().unwrap_or_else(|| Path::new("."));
         let composite_path = preset_dir.join(&raw.shader.composite);
+        let warp_path = raw.shader.warp.as_ref().map(|w| preset_dir.join(w));
 
         Ok(PresetSpec {
             name: raw.name,
@@ -249,12 +355,49 @@ impl PresetSpec {
             description: raw.description,
             source_path: toml_path.to_path_buf(),
             composite_path,
+            warp_path,
             mapping,
             edge,
             palette,
-            post: raw.post,
+            post,
+            particles,
         })
     }
+}
+
+fn parse_particles(name: &str, rp: &RawParticles) -> Result<ParticleParams> {
+    let d = ParticleParams::default();
+    let spawn = match rp.spawn.as_deref() {
+        None => d.spawn,
+        Some(s) => SpawnShape::parse(s).ok_or_else(|| {
+            anyhow!("preset '{name}': particle spawn '{s}' (center|ring|edges|waveform|random)")
+        })?,
+    };
+    let color = match &rp.color {
+        None => d.color,
+        Some(RawColor::Index(i)) if *i < 4 => ColorMode::Palette(*i),
+        Some(RawColor::Index(i)) => return Err(anyhow!("preset '{name}': particle color index {i} (0–3)")),
+        Some(RawColor::Name(s)) => match s.to_ascii_lowercase().as_str() {
+            "ramp" => ColorMode::Ramp,
+            "spectrum" => ColorMode::Spectrum,
+            _ => return Err(anyhow!("preset '{name}': particle color '{s}' (0–3|ramp|spectrum)")),
+        },
+    };
+    Ok(ParticleParams {
+        count: rp.count.unwrap_or(d.count),
+        spawn,
+        speed: rp.speed.unwrap_or(d.speed),
+        flow: rp.flow.unwrap_or(d.flow),
+        flow_scale: rp.flow_scale.unwrap_or(d.flow_scale),
+        drag: rp.drag.unwrap_or(d.drag),
+        size: rp.size.unwrap_or(d.size),
+        life: rp.life.unwrap_or(d.life),
+        color,
+        burst: rp.burst.unwrap_or(d.burst),
+        bass_push: rp.bass_push.unwrap_or(d.bass_push),
+        gravity: rp.gravity.unwrap_or(d.gravity),
+        intensity: rp.intensity.unwrap_or(d.intensity),
+    })
 }
 
 #[cfg(test)]
@@ -277,12 +420,18 @@ composite = "test.wgsl"
         PresetSpec::parse(src, Path::new("presets/test.toml"))
     }
 
+    fn eval_post(spec: &PresetSpec, f: &AudioFeatures) -> PostParams {
+        spec.post.apply(&PostParams::default(), &EvalContext::new(f))
+    }
+
     #[test]
     fn loads_minimal_preset() {
         let spec = parse(MIN).unwrap();
         assert_eq!(spec.name, "Test");
         assert_eq!(spec.composite_path, Path::new("presets").join("test.wgsl"));
         assert_eq!(spec.edge, EdgeMode::Mirror);
+        assert!(spec.warp_path.is_none());
+        assert!(spec.particles.is_none());
     }
 
     #[test]
@@ -314,10 +463,55 @@ color3 = [1.0, 1.0, 1.0, 1.0]
     fn post_overrides_apply_over_defaults() {
         let spec = parse(&format!("{MIN}\n[post]\nbloom = 1.5\nled_mask = true\n")).unwrap();
         let base = PostParams::default();
-        let p = spec.post.apply(&base);
+        let p = eval_post(&spec, &AudioFeatures::default());
         assert_eq!(p.bloom, 1.5);
         assert_eq!(p.led_mask, 1.0);
         assert_eq!(p.vignette, base.vignette);
+    }
+
+    #[test]
+    fn post_values_can_be_audio_reactive_expressions() {
+        let spec = parse(&format!(
+            "{MIN}\n[post]\nchroma = \"beat * 0.8\"\necho_alpha = 0.4\nmirror = \"kaleido:5\"\necho_orient = \"x\"\n"
+        ))
+        .unwrap();
+        let f = AudioFeatures {
+            beat: 0.5,
+            ..Default::default()
+        };
+        let p = eval_post(&spec, &f);
+        assert!((p.chroma - 0.4).abs() < 1e-6);
+        assert!((p.echo_alpha - 0.4).abs() < 1e-6);
+        assert_eq!(p.mirror, Mirror::Kaleido(5));
+        assert_eq!(p.echo_orient, EchoOrient::FlipX);
+        assert!(parse(&format!("{MIN}\n[post]\nchroma = \"beet * 2\"\n")).is_err());
+        assert!(parse(&format!("{MIN}\n[post]\nmirror = \"spiral\"\n")).is_err());
+    }
+
+    #[test]
+    fn custom_warp_path_is_relative_to_toml() {
+        let spec = parse(&MIN.replace("composite = \"test.wgsl\"", "composite = \"test.wgsl\"\nwarp = \"test_warp.wgsl\""))
+            .unwrap();
+        assert_eq!(spec.warp_path, Some(Path::new("presets").join("test_warp.wgsl")));
+    }
+
+    #[test]
+    fn particles_table_parses_with_defaults() {
+        let spec = parse(&format!(
+            "{MIN}\n[particles]\ncount = 5000\nspawn = \"ring\"\ncolor = \"spectrum\"\nburst = 0.5\n"
+        ))
+        .unwrap();
+        let p = spec.particles.unwrap();
+        assert_eq!(p.count, 5000);
+        assert_eq!(p.spawn, SpawnShape::Ring);
+        assert_eq!(p.color, ColorMode::Spectrum);
+        assert_eq!(p.burst, 0.5);
+        assert_eq!(p.life, ParticleParams::default().life);
+
+        let idx = parse(&format!("{MIN}\n[particles]\ncolor = 2\n")).unwrap();
+        assert_eq!(idx.particles.unwrap().color, ColorMode::Palette(2));
+        assert!(parse(&format!("{MIN}\n[particles]\ncolor = 7\n")).is_err());
+        assert!(parse(&format!("{MIN}\n[particles]\nspawn = \"donut\"\n")).is_err());
     }
 
     #[test]
@@ -336,5 +530,6 @@ color3 = [1.0, 1.0, 1.0, 1.0]
     fn rejects_unknown_keys() {
         assert!(parse(&format!("{MIN}\n[post]\nbloon = 1.0\n")).is_err());
         assert!(parse(&MIN.replace("decay = \"0.97\"", "decay = \"0.97\"\nzooom = \"1\"")).is_err());
+        assert!(parse(&format!("{MIN}\n[particles]\ncuont = 5\n")).is_err());
     }
 }

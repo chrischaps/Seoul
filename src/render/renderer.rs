@@ -1,4 +1,4 @@
-//! Frame orchestration: warp → composite → bloom → post.
+//! Frame orchestration: warp → particles → composite → bloom → post.
 
 use std::path::Path;
 use std::time::Instant;
@@ -9,13 +9,15 @@ use winit::dpi::PhysicalSize;
 
 use crate::audio::AudioFeatures;
 use crate::preset::PresetLibrary;
-use crate::preset::shader::CompositeLayouts;
+use crate::preset::library::PresetLayouts;
+use crate::preset::shader::{CompositeLayouts, palette_layout};
 use crate::render::context::RenderContext;
 use crate::render::feedback::{FeedbackTextures, feedback_size};
 use crate::render::gpu;
+use crate::render::particles::{ParticleFrame, ParticleSystem};
 use crate::render::post::{PostParams, PostPass};
 use crate::render::screenshot::CaptureTarget;
-use crate::render::warp::WarpPass;
+use crate::render::warp::{WarpDraw, WarpLayouts, WarpPass};
 
 pub struct RendererOptions {
     pub render_scale: f32,
@@ -27,6 +29,7 @@ pub struct Renderer {
     audio_bg: wgpu::BindGroup,
     feedback: FeedbackTextures,
     warp: WarpPass,
+    particles: ParticleSystem,
     post: PostPass,
     library: PresetLibrary,
     surface_format: wgpu::TextureFormat,
@@ -47,11 +50,13 @@ impl Renderer {
             contents: bytemuck::bytes_of(&AudioFeatures::default()),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
+        // Audio features are read by composite and warp fragments, particle
+        // vertices and the particle simulation.
         let audio_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seoul.audio_features.bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -71,18 +76,26 @@ impl Renderer {
 
         let output_size = (ctx.size.width, ctx.size.height);
         let fb_size = feedback_size(output_size, opts.render_scale);
+        let palette_layout = palette_layout(device);
+        let warp_layouts = WarpLayouts::new(device, &audio_layout, &palette_layout);
+
         let feedback = FeedbackTextures::new(device, &ctx.queue, fb_size);
-        let warp = WarpPass::new(device, feedback.views());
+        let warp = WarpPass::new(device, feedback.views(), warp_layouts.clone())?;
+        let particles = ParticleSystem::new(device, &audio_layout, &palette_layout)?;
         let post = PostPass::new(device, ctx.config.format, feedback.views(), feedback.size());
 
-        let composite_layouts = CompositeLayouts::new(device, &audio_layout);
-        let library = PresetLibrary::load(device, presets_dir, composite_layouts, opts.post_defaults)?;
+        let layouts = PresetLayouts {
+            composite: CompositeLayouts::new(device, &audio_layout, &palette_layout),
+            warp: warp_layouts,
+        };
+        let library = PresetLibrary::load(device, presets_dir, layouts, opts.post_defaults)?;
 
         Ok(Self {
             audio_buf,
             audio_bg,
             feedback,
             warp,
+            particles,
             post,
             library,
             surface_format: ctx.config.format,
@@ -127,8 +140,13 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("seoul.feedback.resize"),
         });
-        self.warp
-            .resample(device, &mut encoder, self.feedback.read_view(), fresh.read_view());
+        self.warp.resample(
+            device,
+            &mut encoder,
+            self.feedback.read_view(),
+            fresh.read_view(),
+            &self.audio_bg,
+        );
         ctx.queue.submit(Some(encoder.finish()));
 
         self.feedback = fresh;
@@ -161,9 +179,17 @@ impl Renderer {
         let plan = self.library.frame_plan(&f);
 
         ctx.queue.write_buffer(&self.audio_buf, 0, bytemuck::bytes_of(&f));
-        self.warp
-            .update(&ctx.queue, &plan.warp.to_uniforms(dt, f.time, f.aspect, (fw, fh)));
         self.post.update(&ctx.queue, &plan.post, f.time, f.beat, self.output_size);
+        let warp_draws: Vec<WarpDraw> = plan
+            .warps
+            .iter()
+            .map(|w| WarpDraw {
+                pipeline: w.pipeline,
+                uniforms: w.params.to_uniforms(dt, f.time, f.aspect, (fw, fh)),
+                weight: w.weight,
+                palette_bg: w.palette_bg,
+            })
+            .collect();
 
         let read_idx = self.feedback.read_index();
         let write_idx = self.feedback.write_index();
@@ -173,8 +199,30 @@ impl Renderer {
             label: Some("seoul.frame"),
         });
 
-        // Pass 1: warp last frame into this one.
-        self.warp.render(&mut encoder, write_view, read_idx, None);
+        // Pass 1: warp last frame into this one — one weighted draw per
+        // active preset, so transitions crossfade the feedback dynamics.
+        self.warp
+            .render(&ctx.queue, &mut encoder, write_view, read_idx, &self.audio_bg, &warp_draws);
+
+        // Pass 1b: particles add straight into the feedback, leaving trails.
+        if let Some((pplan, palette_bg)) = &plan.particles {
+            self.particles.run(
+                &ctx.queue,
+                &mut encoder,
+                write_view,
+                pplan,
+                &ParticleFrame {
+                    dt,
+                    time: f.time,
+                    frame: self.frame as u32,
+                    aspect: f.aspect,
+                    resolution: (fw, fh),
+                    beat_count: f.beat_count,
+                    audio_bg: &self.audio_bg,
+                    palette_bg,
+                },
+            );
+        }
 
         // Pass 2: composite — additive, one draw per active preset. The blend
         // constant carries transition intensity × frame-time normalization so

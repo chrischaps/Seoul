@@ -23,6 +23,76 @@ pub struct PostParams {
     pub led_pitch: f32,
     pub saturation: f32,
     pub contrast: f32,
+    /// MilkDrop "video echo": blend in a zoomed/flipped copy of the frame.
+    pub echo_alpha: f32,
+    pub echo_zoom: f32,
+    pub echo_orient: EchoOrient,
+    pub mirror: Mirror,
+}
+
+/// Flip applied to the echo copy.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum EchoOrient {
+    #[default]
+    None,
+    FlipX,
+    FlipY,
+    FlipXY,
+}
+
+impl EchoOrient {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "none" => Self::None,
+            "x" | "flip_x" => Self::FlipX,
+            "y" | "flip_y" => Self::FlipY,
+            "xy" | "both" | "flip_xy" => Self::FlipXY,
+            _ => return None,
+        })
+    }
+}
+
+/// Display-time symmetry.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Mirror {
+    #[default]
+    None,
+    /// Left half reflected onto the right.
+    X,
+    /// Bottom half reflected onto the top.
+    Y,
+    /// Both — four-way symmetry.
+    Quad,
+    /// N-fold mirrored wedges around the center.
+    Kaleido(u32),
+}
+
+impl Mirror {
+    /// "none" | "x" | "y" | "quad" | "kaleido" | "kaleido:N"
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.to_ascii_lowercase();
+        Some(match s.as_str() {
+            "none" => Self::None,
+            "x" => Self::X,
+            "y" => Self::Y,
+            "quad" => Self::Quad,
+            "kaleido" => Self::Kaleido(6),
+            _ => {
+                let n = s.strip_prefix("kaleido:")?.trim().parse::<u32>().ok()?;
+                Self::Kaleido(n.clamp(2, 32))
+            }
+        })
+    }
+
+    fn encode(self) -> (f32, f32) {
+        match self {
+            Self::None => (0.0, 0.0),
+            Self::X => (1.0, 0.0),
+            Self::Y => (2.0, 0.0),
+            Self::Quad => (3.0, 0.0),
+            Self::Kaleido(n) => (4.0, n as f32),
+        }
+    }
 }
 
 impl Default for PostParams {
@@ -38,6 +108,10 @@ impl Default for PostParams {
             led_pitch: 9.0,
             saturation: 1.05,
             contrast: 1.0,
+            echo_alpha: 0.0,
+            echo_zoom: 1.0,
+            echo_orient: EchoOrient::None,
+            mirror: Mirror::None,
         }
     }
 }
@@ -57,6 +131,10 @@ impl PostParams {
             led_pitch: if t < 0.5 { a.led_pitch } else { b.led_pitch },
             saturation: l(a.saturation, b.saturation),
             contrast: l(a.contrast, b.contrast),
+            echo_alpha: l(a.echo_alpha, b.echo_alpha),
+            echo_zoom: l(a.echo_zoom, b.echo_zoom),
+            echo_orient: if t < 0.5 { a.echo_orient } else { b.echo_orient },
+            mirror: if t < 0.5 { a.mirror } else { b.mirror },
         }
     }
 }
@@ -84,10 +162,15 @@ struct PostUniforms {
     beat: f32,
     resolution: [f32; 2],
     contrast: f32,
-    _pad: [f32; 3],
+    echo_alpha: f32,
+    echo_zoom: f32,
+    echo_orient: f32,
+    mirror_mode: f32,
+    mirror_n: f32,
+    _pad: [f32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<PostUniforms>() == 64);
+const _: () = assert!(std::mem::size_of::<PostUniforms>() == 80);
 
 struct BloomStep {
     bind_group: wgpu::BindGroup,
@@ -238,6 +321,7 @@ impl PostPass {
         }
 
         let levels = self.chain.mip_views.len().max(1) as f32;
+        let (mirror_mode, mirror_n) = params.mirror.encode();
         let u = PostUniforms {
             exposure: params.exposure,
             // The up-chain sums every level into mip 0; normalize.
@@ -252,7 +336,12 @@ impl PostPass {
             beat,
             resolution: [output_size.0 as f32, output_size.1 as f32],
             contrast: params.contrast,
-            _pad: [0.0; 3],
+            echo_alpha: params.echo_alpha.clamp(0.0, 1.0),
+            echo_zoom: params.echo_zoom.max(0.05),
+            echo_orient: params.echo_orient as u8 as f32,
+            mirror_mode,
+            mirror_n,
+            _pad: [0.0; 2],
         };
         queue.write_buffer(&self.final_uniforms, 0, bytemuck::bytes_of(&u));
     }
