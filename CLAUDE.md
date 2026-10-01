@@ -25,9 +25,9 @@ Space = next preset · Backspace = prev · R = random · A = toggle auto-advance
 
 Three long-lived threads exchange data through lock-free structures:
 
-1. **Audio callback (cpal / WASAPI loopback)** — `src/audio/capture.rs`. Downmixes to mono f32 and pushes into a `ringbuf::HeapRb`.
-2. **Analysis thread** — `src/audio/analysis.rs`. Pops from the ring, runs a 2048-pt Hann-windowed real FFT, computes log-spaced spectrum, bass/mid/treble bands, RMS volume, and beat detection (history-ratio on smoothed bass). Writes an `AudioFeatures` snapshot each frame into a `triple_buffer`.
-3. **Render thread (winit event loop)** — `src/main.rs` + `src/render/`. Reads the latest `AudioFeatures`, uploads to GPU, renders.
+1. **Audio callback (cpal / WASAPI loopback)** — `src/audio/capture.rs`. Downmixes to mono f32 and pushes into a `ringbuf::HeapRb`. `LoopbackCapture` (main thread, polled per frame) reopens the stream on errors or default-device changes and sends each new ring to the analysis thread.
+2. **Analysis thread** — `src/audio/analysis.rs`. A pure `Analyzer` steps on a 256-sample hop of the *sample* clock: 2048-pt FFT, per-band AGC'd bass/mid/treble (+ ~1 s `*_att`), dB spectrum, spectral-flux beat detection, IOI-histogram tempo + phase oscillator, trigger-aligned waveform. When loopback goes quiet (WASAPI sends no packets) the thread feeds real-time zeros so everything decays naturally. Publishes into a `triple_buffer`.
+3. **Render thread (winit event loop)** — `src/main.rs` + `src/render/`. Reads the latest `AudioFeatures`, **stamps the clock fields** (`time`, `dt`, `frame`), uploads to GPU, renders. Time lives here, not in analysis, so visuals never freeze.
 
 `AudioFeatures` (`src/audio/features.rs`) is `#[repr(C)] Pod` and is **both the CPU-side feature snapshot and the exact GPU storage-buffer layout** bound at `@group(0) @binding(0)` in every composite shader. Its layout must stay in sync with `shaders/composite_prelude.wgsl`.
 
@@ -45,7 +45,7 @@ Textures then swap (`feedback.swap()`), so next frame's warp reads what this fra
 
 A preset is a `.toml` + `.wgsl` pair in `presets/`. Authors write **only** the fragment function `fs_composite` — `shaders/composite_prelude.wgsl` is prepended at compile time and provides: `AudioFeatures`/`Palette` bindings, the `Varying` struct, `vs_fullscreen`, and `waveform_at` / `spectrum_at` helpers. Do not redeclare these in preset shaders.
 
-Each TOML declares four expressions under `[mapping]` — `zoom`, `rotation`, `warp_amount`, `decay` — written in a tiny mini-language parsed by `preset/expr.rs`. Available variables: `bass mid treble bass_att mid_att treble_att volume beat time`. Available functions: `sin cos abs sqrt pow min max clamp mix`. These expressions are parsed once at load and evaluated every frame to drive the warp/decay of pass 1.
+Each TOML declares four expressions under `[mapping]` — `zoom`, `rotation`, `warp_amount`, `decay` — written in a tiny mini-language parsed by `preset/expr.rs`. Available variables: `bass mid treble bass_att mid_att treble_att volume beat time dt frame bpm beat_phase beat_count aspect`. Available functions (WGSL semantics): `sin cos tan abs sqrt exp log floor fract sign pow min max atan2 step clamp mix smoothstep`. These expressions are parsed once at load and evaluated every frame to drive the warp/decay of pass 1.
 
 Preset compilation goes through `preset/shader.rs`: a wgpu validation error scope wraps `create_shader_module` so a bad preset returns `Err` instead of panicking the device — this is what makes hot-reload safe.
 
@@ -55,4 +55,4 @@ For an in-depth walkthrough (feature extraction math, pass-by-pass GPU dataflow,
 
 ## Audio capture gotcha (WASAPI loopback)
 
-cpal's WASAPI backend implements loopback via a specific pattern: call `build_input_stream` **on the default output device**, using the config returned by `default_output_config()` (not `default_input_config()`). The backend detects this combination and sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. If capture ever silently stops working, re-check `src/audio/capture.rs::start_capture` — the device/config pairing is the load-bearing part.
+cpal's WASAPI backend implements loopback via a specific pattern: call `build_input_stream` **on the default output device**, using the config returned by `default_output_config()` (not `default_input_config()`). The backend detects this combination and sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. If capture ever silently stops working, re-check `src/audio/capture.rs::open_loopback` — the device/config pairing is the load-bearing part. (Still true as of cpal 0.18; it also reports `StreamInvalidated`/`DeviceNotAvailable` on default-device changes, which `LoopbackCapture` uses to reconnect.)

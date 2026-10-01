@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use cpal::Stream;
 use tracing::{error, info};
 use triple_buffer::Output;
 use winit::application::ApplicationHandler;
@@ -18,7 +17,7 @@ mod render;
 use std::path::PathBuf;
 
 use crate::audio::AudioFeatures;
-use crate::audio::capture::CaptureHandle;
+use crate::audio::capture::LoopbackCapture;
 use crate::render::{RenderContext, Renderer};
 
 struct App {
@@ -26,7 +25,7 @@ struct App {
     ctx: Option<RenderContext>,
     renderer: Option<Renderer>,
     features: Output<AudioFeatures>,
-    _stream: Stream,
+    capture: LoopbackCapture,
     fullscreen: bool,
     reconfigure: bool,
 }
@@ -45,6 +44,8 @@ impl App {
     }
 
     fn render(&mut self) {
+        self.capture.poll();
+
         let (Some(ctx), Some(renderer), Some(window)) = (
             self.ctx.as_mut(),
             self.renderer.as_mut(),
@@ -183,12 +184,8 @@ fn main() -> Result<()> {
 
     info!("seoul starting");
 
-    let CaptureHandle {
-        stream,
-        consumer,
-        sample_rate,
-    } = audio::capture::start_capture()?;
-    let features = audio::analysis::spawn_analysis(consumer, sample_rate);
+    let (features, source_tx) = audio::analysis::spawn_analysis();
+    let capture = LoopbackCapture::new(source_tx);
 
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -198,7 +195,7 @@ fn main() -> Result<()> {
         ctx: None,
         renderer: None,
         features,
-        _stream: stream,
+        capture,
         fullscreen: false,
         reconfigure: false,
     };

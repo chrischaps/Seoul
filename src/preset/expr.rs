@@ -7,8 +7,13 @@
 //!   primary  = number | ident | ident '(' arglist ')' | '(' expr ')'
 //!   arglist  = expr (',' expr)*
 //!
-//! Variables: bass, mid, treble, bass_att, mid_att, treble_att, volume, beat, time
-//! Functions: sin, cos, abs, sqrt, pow(x,y), min(a,b), max(a,b), clamp(x,lo,hi), mix(a,b,t)
+//! Variables: bass, mid, treble, bass_att, mid_att, treble_att, volume, beat,
+//!            time, dt, frame, bpm, beat_phase, beat_count, aspect
+//! Functions: sin, cos, tan, abs, sqrt, exp, log, floor, fract, sign,
+//!            pow(x,y), min(a,b), max(a,b), atan2(y,x), step(edge,x),
+//!            clamp(x,lo,hi), mix(a,b,t), smoothstep(e0,e1,x)
+//!
+//! Functions follow WGSL semantics so a mapping reads the same as shader code.
 
 use std::fmt;
 
@@ -42,27 +47,51 @@ pub enum VarKind {
     Volume,
     Beat,
     Time,
+    Dt,
+    Frame,
+    Bpm,
+    BeatPhase,
+    BeatCount,
+    Aspect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Func {
     Sin,
     Cos,
+    Tan,
     Abs,
     Sqrt,
+    Exp,
+    Log,
+    Floor,
+    Fract,
+    Sign,
     Pow,
     Min,
     Max,
+    Atan2,
+    Step,
     Clamp,
     Mix,
+    Smoothstep,
 }
 
 impl Func {
     fn arity(self) -> usize {
         match self {
-            Func::Sin | Func::Cos | Func::Abs | Func::Sqrt => 1,
-            Func::Pow | Func::Min | Func::Max => 2,
-            Func::Clamp | Func::Mix => 3,
+            Func::Sin
+            | Func::Cos
+            | Func::Tan
+            | Func::Abs
+            | Func::Sqrt
+            | Func::Exp
+            | Func::Log
+            | Func::Floor
+            | Func::Fract
+            | Func::Sign => 1,
+            Func::Pow | Func::Min | Func::Max | Func::Atan2 | Func::Step => 2,
+            Func::Clamp | Func::Mix | Func::Smoothstep => 3,
         }
     }
 }
@@ -99,14 +128,18 @@ impl Expr {
                 VarKind::Bass => ctx.features.bass,
                 VarKind::Mid => ctx.features.mid,
                 VarKind::Treble => ctx.features.treble,
-                // Phase 1 doesn't populate the *_att fields yet — they fall
-                // back to the smoothed values, which is reasonable behavior.
-                VarKind::BassAtt => ctx.features.bass,
-                VarKind::MidAtt => ctx.features.mid,
-                VarKind::TrebleAtt => ctx.features.treble,
+                VarKind::BassAtt => ctx.features.bass_att,
+                VarKind::MidAtt => ctx.features.mid_att,
+                VarKind::TrebleAtt => ctx.features.treble_att,
                 VarKind::Volume => ctx.features.volume,
                 VarKind::Beat => ctx.features.beat,
                 VarKind::Time => ctx.features.time,
+                VarKind::Dt => ctx.features.dt,
+                VarKind::Frame => ctx.features.frame,
+                VarKind::Bpm => ctx.features.bpm,
+                VarKind::BeatPhase => ctx.features.beat_phase,
+                VarKind::BeatCount => ctx.features.beat_count,
+                VarKind::Aspect => ctx.features.aspect,
             },
             Expr::Neg(e) => -e.eval(ctx),
             Expr::BinOp(op, a, b) => {
@@ -122,8 +155,31 @@ impl Expr {
             Expr::Call(f, args) => match f {
                 Func::Sin => args[0].eval(ctx).sin(),
                 Func::Cos => args[0].eval(ctx).cos(),
+                Func::Tan => args[0].eval(ctx).tan(),
                 Func::Abs => args[0].eval(ctx).abs(),
                 Func::Sqrt => args[0].eval(ctx).sqrt(),
+                Func::Exp => args[0].eval(ctx).exp(),
+                Func::Log => args[0].eval(ctx).ln(),
+                Func::Floor => args[0].eval(ctx).floor(),
+                Func::Fract => {
+                    let x = args[0].eval(ctx);
+                    x - x.floor()
+                }
+                Func::Sign => {
+                    let x = args[0].eval(ctx);
+                    if x > 0.0 {
+                        1.0
+                    } else if x < 0.0 {
+                        -1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Func::Atan2 => args[0].eval(ctx).atan2(args[1].eval(ctx)),
+                Func::Step => {
+                    let edge = args[0].eval(ctx);
+                    if args[1].eval(ctx) < edge { 0.0 } else { 1.0 }
+                }
                 Func::Pow => args[0].eval(ctx).powf(args[1].eval(ctx)),
                 Func::Min => args[0].eval(ctx).min(args[1].eval(ctx)),
                 Func::Max => args[0].eval(ctx).max(args[1].eval(ctx)),
@@ -133,6 +189,12 @@ impl Expr {
                     let b = args[1].eval(ctx);
                     let t = args[2].eval(ctx);
                     a + (b - a) * t
+                }
+                Func::Smoothstep => {
+                    let e0 = args[0].eval(ctx);
+                    let e1 = args[1].eval(ctx);
+                    let t = ((args[2].eval(ctx) - e0) / (e1 - e0)).clamp(0.0, 1.0);
+                    t * t * (3.0 - 2.0 * t)
                 }
             },
         }
@@ -347,6 +409,12 @@ fn lookup_var(name: &str) -> Option<VarKind> {
         "volume" => VarKind::Volume,
         "beat" => VarKind::Beat,
         "time" => VarKind::Time,
+        "dt" => VarKind::Dt,
+        "frame" => VarKind::Frame,
+        "bpm" => VarKind::Bpm,
+        "beat_phase" => VarKind::BeatPhase,
+        "beat_count" => VarKind::BeatCount,
+        "aspect" => VarKind::Aspect,
         _ => return None,
     })
 }
@@ -355,13 +423,22 @@ fn lookup_func(name: &str) -> Option<Func> {
     Some(match name {
         "sin" => Func::Sin,
         "cos" => Func::Cos,
+        "tan" => Func::Tan,
         "abs" => Func::Abs,
         "sqrt" => Func::Sqrt,
+        "exp" => Func::Exp,
+        "log" => Func::Log,
+        "floor" => Func::Floor,
+        "fract" => Func::Fract,
+        "sign" => Func::Sign,
         "pow" => Func::Pow,
         "min" => Func::Min,
         "max" => Func::Max,
+        "atan2" => Func::Atan2,
+        "step" => Func::Step,
         "clamp" => Func::Clamp,
         "mix" => Func::Mix,
+        "smoothstep" => Func::Smoothstep,
         _ => return None,
     })
 }
@@ -430,6 +507,56 @@ mod tests {
         assert_eq!(eval("max(5, 3)", &f), 5.0);
         assert_eq!(eval("clamp(10, 0, 5)", &f), 5.0);
         assert_eq!(eval("mix(0, 10, 0.25)", &f), 2.5);
+    }
+
+    #[test]
+    fn att_vars_read_their_own_fields() {
+        let f = AudioFeatures {
+            bass: 0.9,
+            bass_att: 0.3,
+            mid_att: 0.4,
+            treble_att: 0.5,
+            ..Default::default()
+        };
+        assert_eq!(eval("bass_att", &f), 0.3);
+        assert_eq!(eval("mid_att", &f), 0.4);
+        assert_eq!(eval("treble_att", &f), 0.5);
+    }
+
+    #[test]
+    fn timing_and_tempo_vars() {
+        let f = AudioFeatures {
+            dt: 0.016,
+            frame: 42.0,
+            bpm: 128.0,
+            beat_phase: 0.25,
+            beat_count: 7.0,
+            aspect: 2.0,
+            ..Default::default()
+        };
+        assert_eq!(eval("dt", &f), 0.016);
+        assert_eq!(eval("frame", &f), 42.0);
+        assert_eq!(eval("bpm", &f), 128.0);
+        assert_eq!(eval("beat_phase", &f), 0.25);
+        assert_eq!(eval("beat_count", &f), 7.0);
+        assert_eq!(eval("aspect", &f), 2.0);
+    }
+
+    #[test]
+    fn wgsl_style_functions() {
+        let f = AudioFeatures::default();
+        assert_eq!(eval("floor(2.7)", &f), 2.0);
+        assert!((eval("fract(2.75)", &f) - 0.75).abs() < 1e-6);
+        assert!((eval("fract(0 - 0.25)", &f) - 0.75).abs() < 1e-6);
+        assert_eq!(eval("sign(0 - 3)", &f), -1.0);
+        assert_eq!(eval("sign(0)", &f), 0.0);
+        assert_eq!(eval("step(0.5, 0.4)", &f), 0.0);
+        assert_eq!(eval("step(0.5, 0.5)", &f), 1.0);
+        assert_eq!(eval("smoothstep(0, 1, 0.5)", &f), 0.5);
+        assert_eq!(eval("smoothstep(0, 1, 2)", &f), 1.0);
+        assert!((eval("atan2(1, 1)", &f) - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
+        assert!((eval("exp(log(5))", &f) - 5.0).abs() < 1e-5);
+        assert!(eval("tan(0)", &f).abs() < 1e-6);
     }
 
     #[test]

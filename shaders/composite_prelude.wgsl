@@ -1,14 +1,31 @@
 // Provided to all preset composite shaders. Do not duplicate these declarations
 // in your preset's WGSL file — only write `fs_composite`.
 
+// Layout must match `src/audio/features.rs::AudioFeatures` exactly.
 struct AudioFeatures {
     bass: f32,
     mid: f32,
     treble: f32,
     volume: f32,
+
+    bass_att: f32,
+    mid_att: f32,
+    treble_att: f32,
     beat: f32,
+
     time: f32,
+    dt: f32,
+    frame: f32,
+    bpm: f32,
+
+    beat_phase: f32,
+    beat_count: f32,
+    aspect: f32,
+    bpm_confidence: f32,
+
+    resolution: vec2<f32>,
     pad: vec2<f32>,
+
     spectrum: array<f32, 64>,
     waveform: array<f32, 512>,
 };
@@ -41,13 +58,25 @@ fn vs_fullscreen(@builtin(vertex_index) vid: u32) -> Varying {
 }
 
 // Sample the analyzed waveform at an angle in radians (typically `atan2(p.y, p.x)`).
+// Linearly interpolated; the analysis tapers both ends to zero so a full
+// circle closes without a seam at theta = ±PI.
 fn waveform_at(theta: f32) -> f32 {
-    let i = u32(clamp((theta / TAU + 0.5) * 512.0, 0.0, 511.0));
-    return u.waveform[i];
+    let x = clamp((theta / TAU + 0.5) * 511.0, 0.0, 511.0);
+    let i = u32(x);
+    let j = min(i + 1u, 511u);
+    return mix(u.waveform[i], u.waveform[j], fract(x));
 }
 
-// Sample the log-spaced spectrum at a normalized position (0 = low, 1 = high).
+// Sample the waveform linearly at a normalized position (0 = oldest, 1 = newest).
+fn waveform_lin(t: f32) -> f32 {
+    return waveform_at((clamp(t, 0.0, 1.0) - 0.5) * TAU);
+}
+
+// Sample the log-spaced spectrum at a normalized position (0 = low, 1 = high),
+// linearly interpolated between bins.
 fn spectrum_at(t: f32) -> f32 {
-    let i = u32(clamp(t * 64.0, 0.0, 63.0));
-    return u.spectrum[i];
+    let x = clamp(t, 0.0, 1.0) * 63.0;
+    let i = u32(x);
+    let j = min(i + 1u, 63u);
+    return mix(u.spectrum[i], u.spectrum[j], fract(x));
 }

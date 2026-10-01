@@ -22,7 +22,9 @@ pub struct Renderer {
     warp: WarpPass,
     blit: BlitPass,
     library: PresetLibrary,
+    start_time: Instant,
     last_render_time: Option<Instant>,
+    frame: u64,
 }
 
 impl Renderer {
@@ -74,7 +76,9 @@ impl Renderer {
             warp,
             blit,
             library,
+            start_time: Instant::now(),
             last_render_time: None,
+            frame: 0,
         })
     }
 
@@ -92,12 +96,19 @@ impl Renderer {
         swap_view: &wgpu::TextureView,
         features: &AudioFeatures,
     ) {
-        // Compute frame dt
+        // The render thread owns the clock: audio analysis can stall (WASAPI
+        // loopback sends nothing during silence) but visuals must keep moving.
         let now = Instant::now();
         let dt = match self.last_render_time.replace(now) {
             Some(prev) => (now - prev).as_secs_f32().min(0.1),
             None => 0.0,
         };
+        let mut stamped = *features;
+        stamped.time = (now - self.start_time).as_secs_f32();
+        stamped.dt = dt;
+        stamped.frame = self.frame as f32;
+        self.frame += 1;
+        let features = &stamped;
 
         // Hot-reload any preset changes before evaluating.
         self.library.poll_reloads(&ctx.device);

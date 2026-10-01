@@ -192,7 +192,7 @@ factor  = '-'? primary
 primary = number | ident | ident '(' args ')' | '(' expr ')'
 ```
 
-**Variables**: `bass mid treble bass_att mid_att treble_att volume beat time`. (The `*_att` variants currently alias their non-attack equivalents — reserved for future attack-envelope processing.)
+**Variables**: `bass mid treble bass_att mid_att treble_att volume beat time dt frame bpm beat_phase beat_count aspect`. The `*_att` variants are ~1 s attenuated averages of their bands (MilkDrop semantics).
 
 **Functions**: `sin cos abs sqrt` (arity 1), `pow min max` (arity 2), `clamp mix` (arity 3).
 
