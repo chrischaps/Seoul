@@ -15,10 +15,12 @@ fn hash21(p: vec2<f32>) -> f32 {
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let t = u.time;
 
-    // Pixelate UV into chunky cells (~7px square at 1280x720)
-    let cell_size = 1.0 / 180.0;
-    let cell = floor(in.uv / cell_size);
-    let p = (cell + 0.5) * cell_size;
+    // Pixelate into square cells (100 rows) in aspect-corrected space,
+    // then map each cell center back to UV for the path math.
+    let rows = 100.0;
+    let cell = floor(vec2<f32>(in.uv.x * u.aspect, in.uv.y) * rows);
+    let pc = (cell + 0.5) / rows;
+    let p = vec2<f32>(pc.x / u.aspect, pc.y);
 
     // Wiggling line: two sines with different freqs/phases mix into an
     // organic-looking path. Bass swells the lateral amplitude.

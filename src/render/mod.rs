@@ -1,9 +1,10 @@
-pub mod blit;
 pub mod context;
 pub mod feedback;
-pub mod mesh;
+pub mod gpu;
+pub mod post;
 pub mod renderer;
+pub mod screenshot;
 pub mod warp;
 
 pub use context::RenderContext;
-pub use renderer::Renderer;
+pub use renderer::{Renderer, RendererOptions};

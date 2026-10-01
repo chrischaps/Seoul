@@ -19,7 +19,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let col = mix(col_a, col_b, step(0.5, cell_t));
 
     // Gentle vignette so edges are dim
-    let p = in.uv - vec2<f32>(0.5);
+    let p = centered(in.uv);
     let vignette = 1.0 - smoothstep(0.35, 0.75, length(p));
 
     let intensity = line * vignette * (0.025 + u.beat * 0.045);

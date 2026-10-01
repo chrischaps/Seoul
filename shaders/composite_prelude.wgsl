@@ -57,6 +57,19 @@ fn vs_fullscreen(@builtin(vertex_index) vid: u32) -> Varying {
     return out;
 }
 
+// Aspect-corrected coordinates centered on the screen: y spans -0.5..0.5
+// (bottom → top) and x spans ±0.5·aspect, so `length(centered(uv))` draws
+// true circles at any window shape.
+fn centered(uv: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>((uv.x - 0.5) * u.aspect, uv.y - 0.5);
+}
+
+// (radius, angle) of `centered(uv)`; angle in -PI..PI.
+fn polar(uv: vec2<f32>) -> vec2<f32> {
+    let c = centered(uv);
+    return vec2<f32>(length(c), atan2(c.y, c.x));
+}
+
 // Sample the analyzed waveform at an angle in radians (typically `atan2(p.y, p.x)`).
 // Linearly interpolated; the analysis tapers both ends to zero so a full
 // circle closes without a seam at theta = ±PI.

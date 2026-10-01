@@ -9,7 +9,7 @@
 // pure white. We average the three field colors and scale down to ~0.03.
 @fragment
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
-    let p = (in.uv - vec2<f32>(0.5)) * 2.0; // -1..1
+    let p = centered(in.uv) * 2.0; // y in -1..1, x scaled by aspect
     let r = length(p);
 
     let t = u.time;

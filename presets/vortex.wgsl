@@ -4,7 +4,7 @@
 // arms appear to wind forever.
 @fragment
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
-    let p = in.uv - vec2<f32>(0.5);
+    let p = centered(in.uv);
     let r = length(p);
     let theta = atan2(p.y, p.x);
 

@@ -1,4 +1,4 @@
-// Constellations — a 40x22 grid of cells, ~3% of which host a star.
+// Constellations — a grid of square cells (22 rows) of cells, ~3% of which host a star.
 // Each star has a pseudo-random hue + phase, twinkles from treble, and
 // flashes on beat. Low decay keeps the field mostly dark rather than trailing.
 fn hash2(c: vec2<f32>) -> f32 {
@@ -7,7 +7,8 @@ fn hash2(c: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
-    let g = in.uv * vec2<f32>(40.0, 22.0);
+    // Square cells at any aspect: 22 rows, as many columns as fit.
+    let g = vec2<f32>(in.uv.x * u.aspect, in.uv.y) * 22.0;
     let cell = floor(g);
     let local = fract(g) - vec2<f32>(0.5);
 

@@ -51,8 +51,28 @@ impl PresetState {
     }
 }
 
-pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
+impl PresetState {
+    /// Account for preset `idx` being removed from the library: indices above
+    /// it shift down. Returns false (and changes nothing) if `idx` is in use.
+    pub fn remove_index(&mut self, idx: usize) -> bool {
+        let shift = |i: usize| if i > idx { i - 1 } else { i };
+        match self {
+            PresetState::Stable { current } => {
+                if *current == idx {
+                    return false;
+                }
+                *current = shift(*current);
+            }
+            PresetState::Transitioning { from, to, .. } => {
+                if *from == idx || *to == idx {
+                    return false;
+                }
+                *from = shift(*from);
+                *to = shift(*to);
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -95,6 +115,19 @@ mod tests {
         let _ = s.tick(TRANSITION_DURATION * 0.5);
         s.begin_transition(2);
         assert!(matches!(s, PresetState::Transitioning { from: 1, to: 2, progress } if progress == 0.0));
+    }
+
+    #[test]
+    fn removal_shifts_indices_and_protects_active() {
+        let mut s = PresetState::stable(3);
+        assert!(s.remove_index(1));
+        assert!(matches!(s, PresetState::Stable { current: 2 }));
+        assert!(!s.remove_index(2));
+        let mut t = PresetState::stable(0);
+        t.begin_transition(4);
+        assert!(t.remove_index(2));
+        assert!(matches!(t, PresetState::Transitioning { from: 0, to: 3, .. }));
+        assert!(!t.remove_index(0));
     }
 
     #[test]

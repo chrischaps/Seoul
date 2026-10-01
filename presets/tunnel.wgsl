@@ -2,7 +2,7 @@
 // sparse outer glow. Strong zoom in the mapping pulls it all inward over time.
 @fragment
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
-    let p = in.uv - vec2<f32>(0.5);
+    let p = centered(in.uv);
     let r = length(p);
 
     var col = vec3<f32>(0.0);

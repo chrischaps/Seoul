@@ -1,4 +1,6 @@
 //! File watcher that sends ReloadEvents on .toml/.wgsl changes in the presets dir.
+//! Removals are forwarded too; the library decides what a settled event means
+//! by checking whether the file still exists.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
@@ -21,7 +23,7 @@ pub fn spawn(dir: &Path) -> Result<(RecommendedWatcher, Receiver<ReloadEvent>)> 
         };
         if !matches!(
             event.kind,
-            EventKind::Modify(_) | EventKind::Create(_)
+            EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
         ) {
             return;
         }

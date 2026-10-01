@@ -20,6 +20,7 @@ toml = "1"
 notify = "8"
 arrayvec = "0.7"
 rand = "0.10"
+png = "0.18.1"
 
 [profile.release]
 lto = "thin"
