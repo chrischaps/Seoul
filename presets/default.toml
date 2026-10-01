@@ -1,0 +1,18 @@
+name = "Default"
+author = "seoul"
+description = "Gentle feedback with a pulsing ring, beat spokes, and waveform curl."
+
+[mapping]
+zoom        = "1.0 + bass * 0.05"
+rotation    = "0.008 + mid * 0.015"
+warp_amount = "0.010 + beat * 0.030"
+decay       = "0.960 + treble * 0.015"
+
+[shader]
+composite = "default.wgsl"
+
+[palette]
+color0 = [0.90, 0.30, 0.60, 1.0]   # warm magenta
+color1 = [0.30, 0.85, 0.95, 1.0]   # cool cyan
+color2 = [1.00, 0.90, 0.70, 1.0]   # beat flash
+color3 = [0.85, 0.95, 1.00, 1.0]   # waveform white

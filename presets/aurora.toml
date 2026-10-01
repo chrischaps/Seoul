@@ -1,0 +1,18 @@
+name = "Aurora"
+author = "seoul"
+description = "Slow vertical curtains drifting sideways, deep cool palette."
+
+[mapping]
+zoom        = "1.0 + bass * 0.012"
+rotation    = "-0.002 + mid * 0.004"
+warp_amount = "0.008 + beat * 0.015"
+decay       = "0.978 + treble * 0.008"
+
+[shader]
+composite = "aurora.wgsl"
+
+[palette]
+color0 = [0.10, 0.55, 0.40, 1.0]   # deep teal-green
+color1 = [0.30, 0.80, 0.55, 1.0]   # bright aurora green
+color2 = [0.45, 0.30, 0.85, 1.0]   # violet
+color3 = [0.85, 0.95, 1.00, 1.0]   # ice white

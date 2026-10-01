@@ -1,0 +1,26 @@
+[package]
+name = "seoul"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = "25"
+winit = "0.30"
+cpal = "0.15"
+realfft = "3"
+ringbuf = "0.4"
+triple_buffer = "8"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+notify = "6"
+arrayvec = "0.7"
+rand = "0.8"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

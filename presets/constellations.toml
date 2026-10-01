@@ -1,0 +1,18 @@
+name = "Constellations"
+author = "seoul"
+description = "Dark field of twinkling stars, sparse, beat-triggered flashes."
+
+[mapping]
+zoom        = "1.0 + bass * 0.004"
+rotation    = "0.001 + mid * 0.003"
+warp_amount = "0.002 + beat * 0.012"
+decay       = "0.930 + treble * 0.010"
+
+[shader]
+composite = "constellations.wgsl"
+
+[palette]
+color0 = [0.05, 0.08, 0.18, 1.0]   # deep midnight blue (unused as bg — additive)
+color1 = [0.75, 0.85, 1.00, 1.0]   # cool white star
+color2 = [1.00, 0.80, 0.55, 1.0]   # warm amber star
+color3 = [0.60, 0.75, 1.00, 1.0]   # blue-white supergiant flash

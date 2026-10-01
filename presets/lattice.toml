@@ -1,0 +1,18 @@
+name = "Lattice"
+author = "seoul"
+description = "Rectangular grid pulsing with bass, colors shifting cell by cell."
+
+[mapping]
+zoom        = "1.0 + bass * 0.030"
+rotation    = "0.002 + mid * 0.008"
+warp_amount = "0.004 + beat * 0.035"
+decay       = "0.958 + treble * 0.014"
+
+[shader]
+composite = "lattice.wgsl"
+
+[palette]
+color0 = [0.30, 0.10, 0.45, 1.0]   # deep plum
+color1 = [0.95, 0.50, 0.25, 1.0]   # warm orange
+color2 = [0.20, 0.75, 0.75, 1.0]   # teal
+color3 = [1.00, 0.90, 0.60, 1.0]   # cream highlight

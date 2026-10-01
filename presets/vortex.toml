@@ -1,0 +1,18 @@
+name = "Vortex"
+author = "seoul"
+description = "Counter-rotating spiral arms expanding outward, hot reds and oranges."
+
+[mapping]
+zoom        = "0.975 - bass * 0.015"
+rotation    = "-0.020 - mid * 0.030"
+warp_amount = "0.008 + beat * 0.025"
+decay       = "0.970 + treble * 0.010"
+
+[shader]
+composite = "vortex.wgsl"
+
+[palette]
+color0 = [0.55, 0.08, 0.05, 1.0]   # deep blood red
+color1 = [0.95, 0.30, 0.10, 1.0]   # molten orange
+color2 = [0.98, 0.75, 0.20, 1.0]   # hot yellow
+color3 = [1.00, 0.95, 0.80, 1.0]   # white-hot core
