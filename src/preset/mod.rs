@@ -1,3 +1,4 @@
+pub mod curation;
 pub mod expr;
 pub mod library;
 pub mod preset;

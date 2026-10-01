@@ -315,7 +315,7 @@ impl ParticleSystem {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: FEEDBACK_FORMAT,
                     blend: Some(additive),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: wgpu::ColorWrites::COLOR,
                 })],
                 compilation_options: Default::default(),
             }),

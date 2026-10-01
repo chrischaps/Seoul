@@ -7,6 +7,7 @@ use wgpu::util::DeviceExt;
 use crate::preset::shader::compile_wgsl;
 use crate::render::feedback::FEEDBACK_FORMAT;
 use crate::render::gpu;
+use crate::render::mask::{MASKED_BLEND, MaskPass, MaskSlot};
 
 const DECAY_MIN: f32 = 0.5;
 const DECAY_MAX: f32 = 0.9999;
@@ -203,16 +204,9 @@ pub fn build_warp_pipeline(
     file: &str,
 ) -> Result<wgpu::RenderPipeline> {
     let module = compile_wgsl(device, WARP_PRELUDE, body, &format!("seoul.warp.shader.{label}"), file)?;
-    // Each warp draw adds `weight × warped image` into a cleared target, so
-    // a transition can crossfade two presets' feedback dynamics.
-    let blend = wgpu::BlendState {
-        color: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::Constant,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        },
-        alpha: wgpu::BlendComponent::REPLACE,
-    };
+    // Each warp draw adds `mask × warped image` into a cleared target, so a
+    // transition can crossfade (or dissolve, wipe…) two presets' feedback
+    // dynamics.
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(&format!("seoul.warp.pipeline.{label}")),
@@ -228,8 +222,8 @@ pub fn build_warp_pipeline(
             entry_point: Some("fs_warp"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: FEEDBACK_FORMAT,
-                blend: Some(blend),
-                write_mask: wgpu::ColorWrites::ALL,
+                blend: Some(MASKED_BLEND),
+                write_mask: wgpu::ColorWrites::COLOR,
             })],
             compilation_options: Default::default(),
         }),
@@ -248,12 +242,11 @@ pub fn build_warp_pipeline(
     Ok(pipeline)
 }
 
-/// One weighted warp draw for this frame.
+/// One masked warp draw for this frame.
 pub struct WarpDraw<'a> {
     /// `None` = built-in warp.
     pub pipeline: Option<&'a wgpu::RenderPipeline>,
     pub uniforms: WarpUniforms,
-    pub weight: f32,
     pub palette_bg: &'a wgpu::BindGroup,
 }
 
@@ -370,8 +363,9 @@ impl WarpPass {
         self.texture_bgs = Self::make_texture_bgs(device, &self.layouts.texture, &self.sampler, views);
     }
 
-    /// Warp the `read_idx` feedback texture into `target`: one weighted draw
+    /// Warp the `read_idx` feedback texture into `target`: one masked draw
     /// per active preset, summed into a cleared target.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         queue: &wgpu::Queue,
@@ -379,19 +373,19 @@ impl WarpPass {
         target: &wgpu::TextureView,
         read_idx: usize,
         audio_bg: &wgpu::BindGroup,
+        mask: &MaskPass,
         draws: &[WarpDraw],
     ) {
         for (slot, draw) in self.slots.iter().zip(draws) {
             queue.write_buffer(&slot.buf, 0, bytemuck::bytes_of(&draw.uniforms));
         }
         let mut rpass = gpu::color_pass(encoder, "seoul.warp.pass", target, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
-        rpass.set_bind_group(0, &self.texture_bgs[read_idx], &[]);
-        rpass.set_bind_group(2, audio_bg, &[]);
-        for (slot, draw) in self.slots.iter().zip(draws) {
-            let w = draw.weight as f64;
-            rpass.set_blend_constant(wgpu::Color { r: w, g: w, b: w, a: w });
+        for (i, (slot, draw)) in self.slots.iter().zip(draws).enumerate() {
+            mask.draw(&mut rpass, MaskSlot::warp(i));
             rpass.set_pipeline(draw.pipeline.unwrap_or(&self.default_pipeline));
+            rpass.set_bind_group(0, &self.texture_bgs[read_idx], &[]);
             rpass.set_bind_group(1, &slot.bg, &[]);
+            rpass.set_bind_group(2, audio_bg, &[]);
             rpass.set_bind_group(3, draw.palette_bg, &[]);
             rpass.draw(0..3, 0..1);
         }
@@ -408,8 +402,9 @@ impl WarpPass {
         audio_bg: &wgpu::BindGroup,
     ) {
         let bg = Self::texture_bg(device, &self.layouts.texture, &self.sampler, src);
-        let mut rpass = gpu::color_pass(encoder, "seoul.warp.resample", dst, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
-        rpass.set_blend_constant(wgpu::Color::WHITE);
+        // Alpha 1 = full mask weight for the single straight copy.
+        let clear = wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+        let mut rpass = gpu::color_pass(encoder, "seoul.warp.resample", dst, wgpu::LoadOp::Clear(clear));
         rpass.set_pipeline(&self.default_pipeline);
         rpass.set_bind_group(0, &bg, &[]);
         rpass.set_bind_group(1, &self.identity.bg, &[]);

@@ -15,6 +15,7 @@ use wgpu::util::DeviceExt;
 
 use crate::preset::Palette;
 use crate::render::feedback::FEEDBACK_FORMAT;
+use crate::render::mask::MASKED_BLEND;
 
 /// common.wgsl + composite_prelude.wgsl: prepended to every preset's
 /// composite shader.
@@ -143,17 +144,8 @@ pub fn build_composite_pipeline(
     shader: &wgpu::ShaderModule,
     label_hint: &str,
 ) -> Result<wgpu::RenderPipeline> {
-    // Additive, scaled by the per-draw blend constant (transition intensity
-    // × frame-time normalization).
-    let blend = wgpu::BlendState {
-        color: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::Constant,
-            dst_factor: wgpu::BlendFactor::One,
-            operation: wgpu::BlendOperation::Add,
-        },
-        alpha: wgpu::BlendComponent::OVER,
-    };
-
+    // Additive, weighted per pixel by the transition mask in dst alpha
+    // (which also carries frame-time normalization).
     let label = format!("seoul.composite.pipeline.{label_hint}");
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -170,8 +162,8 @@ pub fn build_composite_pipeline(
             entry_point: Some("fs_composite"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: FEEDBACK_FORMAT,
-                blend: Some(blend),
-                write_mask: wgpu::ColorWrites::ALL,
+                blend: Some(MASKED_BLEND),
+                write_mask: wgpu::ColorWrites::COLOR,
             })],
             compilation_options: Default::default(),
         }),

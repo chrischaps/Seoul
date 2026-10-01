@@ -1,3 +1,4 @@
 /target
 /screenshots
 .claude/settings.local.json
+/seoul-state.toml

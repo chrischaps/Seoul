@@ -1,0 +1,38 @@
+# Seoul settings. Every key is optional; edits apply live while running.
+# Command-line flags (see `seoul --help`) override what's here.
+
+# Preset to start on, by name.
+# start_preset = "Default"
+
+fullscreen = false
+# monitor = 0          # which display to go fullscreen on
+
+# Feedback resolution relative to the window. Lower = faster and softer.
+render_scale = 1.0
+
+[auto]
+# Advance presets automatically (toggle live with A).
+enabled = false
+# Earliest a change may happen; after this it waits for a downbeat.
+min_interval = 20.0
+# Change regardless of the music after this long.
+max_interval = 45.0
+
+[transition]
+# crossfade | dissolve | radial | clock | zoom | random
+style = "random"
+duration = 3.0
+
+[post]
+# Global look defaults; a preset's own [post] table overrides these.
+# exposure = 1.0
+# bloom = 0.35
+# bloom_threshold = 0.7
+# vignette = 0.3
+# grain = 0.15
+# saturation = 1.05
+
+[hud]
+enabled = true
+stats = false          # F1 toggles live
+toast_seconds = 3.0

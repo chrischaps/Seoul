@@ -26,7 +26,10 @@ cargo run --release -- --help
 Windows-only: audio capture uses the WASAPI host explicitly. There is no cross-platform audio path.
 
 ### Runtime keys
-Space = next preset · Backspace = prev · R = random · A = toggle auto-advance · P = screenshot · F11 = fullscreen · Esc = quit.
+Space = next · Backspace = prev · R = shuffle · A = auto-advance · L = lock current · F = favorite · X = hide · 1–9 = jump to favorite · P = screenshot · F11 = fullscreen · Esc = quit.
+
+### Settings
+`seoul.toml` (repo root, or `--config`) holds start preset, fullscreen/monitor, render scale, `[auto]` interval, `[transition]` style/duration, global `[post]` defaults and `[hud]`; it hot-reloads. CLI flags override it (`--auto 8`, `--transition dissolve`, …). Favorites/hidden persist by name in `seoul-state.toml` (gitignored).
 
 ## Architecture
 
@@ -61,7 +64,7 @@ Each TOML declares four required expressions under `[mapping]` — `zoom`, `rota
 
 Preset compilation goes through `preset/shader.rs`: wgpu validation error scopes wrap both `create_shader_module` **and** `create_render_pipeline`, so a bad preset returns `Err` instead of panicking the device — this is what makes hot-reload safe. naga error locations are remapped from prelude+body to the author's file/line. Presets use `centered(uv)` / `polar(uv)` from the prelude for aspect-correct shapes.
 
-`preset/library.rs` owns all compiled presets and a `PresetState` (`preset/transition.rs`) that is either `Stable` or `Transitioning`. `frame_plan()` produces a `FramePlan` with the evaluated `WarpParams`, `PostParams`, and 1–2 `CompositeDraw`s for the current frame. `poll_reloads()` debounces events from `preset/watcher.rs` (notify crate, 120 ms) — editing a `.toml`/`.wgsl` rebuilds that preset live, new presets are added and deleted ones removed; on failure the last good version keeps running.
+`preset/library.rs` owns all compiled presets, curation (`preset/curation.rs`: favorites, hidden, shuffle bag) and a `PresetState` (`preset/transition.rs`) that is either `Stable` or `Transitioning { style, … }`. Transitions are eased (smootherstep) and retarget without popping the dominant layer. Styles (crossfade/dissolve/radial/clock/zoom) are per-pixel: `render/mask.rs` writes each preset's weight into the feedback alpha channel before its warp/composite draw, and those pipelines blend `src × DstAlpha` — so presets never need to know about transitions. Auto-advance waits `min_interval`, then changes on a beat (on a 4-beat boundary when tempo confidence is high), or at `max_interval` regardless. `frame_plan()` produces a `FramePlan` with the evaluated `WarpParams`, `PostParams`, and 1–2 `CompositeDraw`s for the current frame. `poll_reloads()` debounces events from `preset/watcher.rs` (notify crate, 120 ms) — editing a `.toml`/`.wgsl` rebuilds that preset live, new presets are added and deleted ones removed; on failure the last good version keeps running.
 
 For an in-depth walkthrough (feature extraction math, pass-by-pass GPU dataflow, preset system internals, WGSL/Rust layout constraints), see `docs/ARCHITECTURE.md`.
 

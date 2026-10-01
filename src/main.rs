@@ -14,14 +14,45 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 mod audio;
 mod cli;
+mod config;
 mod preset;
 mod render;
 
 use crate::audio::AudioFeatures;
 use crate::audio::capture::LoopbackCapture;
 use crate::cli::Args;
-use crate::render::post::PostParams;
+use crate::config::{Config, ConfigWatch};
+use crate::preset::curation::{Curation, STATE_PATH};
+use crate::preset::library::LibrarySettings;
+use crate::preset::transition::TransitionStyle;
 use crate::render::{RenderContext, Renderer, RendererOptions};
+
+/// Merge config with command-line overrides into library behavior.
+fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
+    let mut s = LibrarySettings {
+        post_defaults: cfg.post.resolve(),
+        auto_advance: cfg.auto.enabled,
+        auto_min: cfg.auto.min_interval,
+        auto_max: cfg.auto.max_interval.max(cfg.auto.min_interval),
+        transition_style: cfg.transition.style().unwrap_or(None),
+        transition_duration: cfg.transition.duration,
+    };
+    if let Some(secs) = args.auto {
+        s.auto_advance = true;
+        s.auto_min = secs;
+        s.auto_max = secs * 1.5;
+    }
+    if let Some(style) = &args.transition {
+        match style.as_str() {
+            "random" => s.transition_style = None,
+            other => match TransitionStyle::parse(other) {
+                Some(t) => s.transition_style = Some(t),
+                None => warn!(style = other, "unknown --transition style; using config"),
+            },
+        }
+    }
+    s
+}
 
 /// Where audio comes from. Loopback must be polled on this thread because
 /// cpal streams are `!Send`; the synth runs entirely on its own thread.
@@ -47,6 +78,8 @@ struct Tour {
 
 struct App {
     args: Args,
+    config: Config,
+    config_watch: Option<ConfigWatch>,
     window: Option<Arc<Window>>,
     ctx: Option<RenderContext>,
     renderer: Option<Renderer>,
@@ -63,16 +96,19 @@ struct App {
 }
 
 impl App {
-    fn toggle_fullscreen(&mut self) {
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
-        self.fullscreen = !self.fullscreen;
-        window.set_fullscreen(self.fullscreen.then_some(Fullscreen::Borderless(None)));
-    }
-
     fn render(&mut self) {
         self.audio.poll();
+        if let Some(cfg) = self.config_watch.as_mut().and_then(|w| w.poll()) {
+            if let Some(r) = self.renderer.as_mut() {
+                let mut settings = library_settings(&cfg, &self.args);
+                // Keep a live A-key toggle unless the file itself changed it.
+                if cfg.auto.enabled == self.config.auto.enabled {
+                    settings.auto_advance = r.library().auto_advance();
+                }
+                r.library_mut().set_settings(settings);
+            }
+            self.config = cfg;
+        }
 
         let (Some(ctx), Some(renderer), Some(window)) =
             (self.ctx.as_mut(), self.renderer.as_mut(), self.window.as_ref())
@@ -157,12 +193,52 @@ impl App {
         window.request_redraw();
     }
 
+    fn toggle_fullscreen_on(&mut self, monitor: Option<usize>, event_loop: &ActiveEventLoop) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        self.fullscreen = !self.fullscreen;
+        let target = monitor.and_then(|i| event_loop.available_monitors().nth(i));
+        window.set_fullscreen(self.fullscreen.then_some(Fullscreen::Borderless(target)));
+    }
+
     fn on_key(&mut self, event_loop: &ActiveEventLoop, kc: KeyCode) {
+        let monitor = self.config.monitor;
         let lib = self.renderer.as_mut().map(|r| r.library_mut());
         match (kc, lib) {
             (KeyCode::Escape, _) => event_loop.exit(),
-            (KeyCode::F11, _) => self.toggle_fullscreen(),
+            (KeyCode::F11, _) => self.toggle_fullscreen_on(monitor, event_loop),
             (KeyCode::KeyP, _) => self.screenshot_requested = true,
+            (KeyCode::KeyF, Some(lib)) => {
+                let on = lib.toggle_favorite();
+                info!(preset = lib.current_name(), favorite = on, "favorite");
+            }
+            (KeyCode::KeyX, Some(lib)) => {
+                let name = lib.current_name().to_owned();
+                let hidden = lib.toggle_hidden();
+                info!(preset = name, hidden, "hide");
+            }
+            (KeyCode::KeyL, Some(lib)) => {
+                let on = lib.toggle_locked();
+                info!(preset = lib.current_name(), locked = on, "lock");
+            }
+            (
+                KeyCode::Digit1
+                | KeyCode::Digit2
+                | KeyCode::Digit3
+                | KeyCode::Digit4
+                | KeyCode::Digit5
+                | KeyCode::Digit6
+                | KeyCode::Digit7
+                | KeyCode::Digit8
+                | KeyCode::Digit9,
+                Some(lib),
+            ) => {
+                let n = kc as usize - KeyCode::Digit1 as usize;
+                if lib.jump_favorite(n) {
+                    info!(preset = lib.current_name(), "favorite {}", n + 1);
+                }
+            }
             (KeyCode::Space, Some(lib)) => {
                 lib.next();
                 info!(preset = lib.current_name(), "next");
@@ -198,12 +274,13 @@ impl ApplicationHandler for App {
 
         let ctx = pollster::block_on(RenderContext::new(window.clone())).expect("failed to create render context");
         let opts = RendererOptions {
-            render_scale: self.args.render_scale.unwrap_or(1.0),
-            post_defaults: PostParams::default(),
+            render_scale: self.args.render_scale.unwrap_or(self.config.render_scale),
+            library: library_settings(&self.config, &self.args),
+            curation: Curation::load(&PathBuf::from(STATE_PATH)),
         };
         let mut renderer = Renderer::new(&ctx, &PathBuf::from("presets"), opts).expect("failed to load presets");
 
-        if let Some(name) = &self.args.preset {
+        if let Some(name) = self.args.preset.as_ref().or(self.config.start_preset.as_ref()) {
             match renderer.library().find(name) {
                 Some(i) => renderer.library_mut().cut_to(i),
                 None => warn!(preset = name, "no such preset; starting on default"),
@@ -222,8 +299,8 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.ctx = Some(ctx);
         self.renderer = Some(renderer);
-        if self.args.fullscreen {
-            self.toggle_fullscreen();
+        if self.args.fullscreen || self.config.fullscreen {
+            self.toggle_fullscreen_on(self.config.monitor, event_loop);
         }
     }
 
@@ -270,6 +347,22 @@ fn main() -> Result<()> {
 
     info!("seoul starting");
 
+    let config_path = PathBuf::from(args.config.as_deref().unwrap_or(config::DEFAULT_PATH));
+    let config = match Config::load(&config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("{e:#} — using defaults");
+            Config::default()
+        }
+    };
+    let config_watch = match ConfigWatch::new(&config_path) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            warn!("config hot-reload disabled: {e:#}");
+            None
+        }
+    };
+
     let (features, source_tx) = audio::analysis::spawn_analysis();
     let audio = if args.synth {
         audio::synth::spawn_synth(source_tx);
@@ -284,6 +377,8 @@ fn main() -> Result<()> {
     let mut app = App {
         screenshot_at: args.screenshot_at,
         args,
+        config,
+        config_watch,
         window: None,
         ctx: None,
         renderer: None,

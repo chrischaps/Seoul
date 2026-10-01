@@ -9,19 +9,22 @@ use winit::dpi::PhysicalSize;
 
 use crate::audio::AudioFeatures;
 use crate::preset::PresetLibrary;
-use crate::preset::library::PresetLayouts;
+use crate::preset::curation::Curation;
+use crate::preset::library::{LibrarySettings, PresetLayouts};
 use crate::preset::shader::{CompositeLayouts, palette_layout};
 use crate::render::context::RenderContext;
 use crate::render::feedback::{FeedbackTextures, feedback_size};
 use crate::render::gpu;
+use crate::render::mask::{MaskPass, MaskSlot};
 use crate::render::particles::{ParticleFrame, ParticleSystem};
-use crate::render::post::{PostParams, PostPass};
+use crate::render::post::PostPass;
 use crate::render::screenshot::CaptureTarget;
 use crate::render::warp::{WarpDraw, WarpLayouts, WarpPass};
 
 pub struct RendererOptions {
     pub render_scale: f32,
-    pub post_defaults: PostParams,
+    pub library: LibrarySettings,
+    pub curation: Curation,
 }
 
 pub struct Renderer {
@@ -29,6 +32,7 @@ pub struct Renderer {
     audio_bg: wgpu::BindGroup,
     feedback: FeedbackTextures,
     warp: WarpPass,
+    mask: MaskPass,
     particles: ParticleSystem,
     post: PostPass,
     library: PresetLibrary,
@@ -81,6 +85,7 @@ impl Renderer {
 
         let feedback = FeedbackTextures::new(device, &ctx.queue, fb_size);
         let warp = WarpPass::new(device, feedback.views(), warp_layouts.clone())?;
+        let mask = MaskPass::new(device);
         let particles = ParticleSystem::new(device, &audio_layout, &palette_layout)?;
         let post = PostPass::new(device, ctx.config.format, feedback.views(), feedback.size());
 
@@ -88,13 +93,14 @@ impl Renderer {
             composite: CompositeLayouts::new(device, &audio_layout, &palette_layout),
             warp: warp_layouts,
         };
-        let library = PresetLibrary::load(device, presets_dir, layouts, opts.post_defaults)?;
+        let library = PresetLibrary::load(device, presets_dir, layouts, opts.library, opts.curation)?;
 
         Ok(Self {
             audio_buf,
             audio_bg,
             feedback,
             warp,
+            mask,
             particles,
             post,
             library,
@@ -186,7 +192,6 @@ impl Renderer {
             .map(|w| WarpDraw {
                 pipeline: w.pipeline,
                 uniforms: w.params.to_uniforms(dt, f.time, f.aspect, (fw, fh)),
-                weight: w.weight,
                 palette_bg: w.palette_bg,
             })
             .collect();
@@ -199,10 +204,21 @@ impl Renderer {
             label: Some("seoul.frame"),
         });
 
-        // Pass 1: warp last frame into this one — one weighted draw per
-        // active preset, so transitions crossfade the feedback dynamics.
-        self.warp
-            .render(&ctx.queue, &mut encoder, write_view, read_idx, &self.audio_bg, &warp_draws);
+        // Per-pixel weights for each preset's draws (transition masks).
+        let k = (dt * 60.0).clamp(0.0, 6.0);
+        self.mask.prepare(&ctx.queue, plan.transition, k, f.aspect);
+
+        // Pass 1: warp last frame into this one — one masked draw per active
+        // preset, so transitions blend the feedback dynamics themselves.
+        self.warp.render(
+            &ctx.queue,
+            &mut encoder,
+            write_view,
+            read_idx,
+            &self.audio_bg,
+            &self.mask,
+            &warp_draws,
+        );
 
         // Pass 1b: particles add straight into the feedback, leaving trails.
         if let Some((pplan, palette_bg)) = &plan.particles {
@@ -224,15 +240,13 @@ impl Renderer {
             );
         }
 
-        // Pass 2: composite — additive, one draw per active preset. The blend
-        // constant carries transition intensity × frame-time normalization so
-        // accumulated brightness doesn't depend on refresh rate.
+        // Pass 2: composite — additive, one draw per active preset, weighted
+        // by its mask (which also carries frame-time normalization, so
+        // accumulated brightness doesn't depend on refresh rate).
         {
-            let k = (dt * 60.0).clamp(0.0, 6.0) as f64;
             let mut rpass = gpu::color_pass(&mut encoder, "seoul.composite.pass", write_view, wgpu::LoadOp::Load);
-            for draw in &plan.draws {
-                let i = draw.intensity as f64 * k;
-                rpass.set_blend_constant(wgpu::Color { r: i, g: i, b: i, a: i });
+            for (i, draw) in plan.draws.iter().enumerate() {
+                self.mask.draw(&mut rpass, MaskSlot::composite(i));
                 rpass.set_pipeline(draw.pipeline);
                 rpass.set_bind_group(0, &self.audio_bg, &[]);
                 rpass.set_bind_group(1, draw.palette_bg, &[]);

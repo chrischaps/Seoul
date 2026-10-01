@@ -9,8 +9,11 @@ USAGE:
     seoul [OPTIONS]
 
 OPTIONS:
+    --config <PATH>         Settings file (default: seoul.toml)
     --synth                 Use the built-in test track instead of system audio
     --preset <NAME>         Start on this preset
+    --auto <SECS>           Auto-advance every SECS seconds (on a beat when possible)
+    --transition <STYLE>    crossfade | dissolve | radial | clock | zoom | random
     --render-scale <F>      Feedback resolution relative to the window (0.25–2.0)
     --size <WxH>            Initial window size in physical pixels
     --fullscreen            Start borderless fullscreen
@@ -22,8 +25,11 @@ OPTIONS:
 
 #[derive(Debug, Default, Clone)]
 pub struct Args {
+    pub config: Option<String>,
     pub synth: bool,
     pub preset: Option<String>,
+    pub auto: Option<f32>,
+    pub transition: Option<String>,
     pub render_scale: Option<f32>,
     pub size: Option<(u32, u32)>,
     pub fullscreen: bool,
@@ -46,6 +52,9 @@ impl Args {
                 "--synth" => args.synth = true,
                 "--fullscreen" => args.fullscreen = true,
                 "--preset" => args.preset = Some(value("--preset")?),
+                "--config" => args.config = Some(value("--config")?),
+                "--auto" => args.auto = Some(num(&value("--auto")?)?),
+                "--transition" => args.transition = Some(value("--transition")?),
                 "--render-scale" => args.render_scale = Some(num(&value("--render-scale")?)?),
                 "--screenshot-at" => args.screenshot_at = Some(num(&value("--screenshot-at")?)?),
                 "--tour" => args.tour = Some(num(&value("--tour")?)?),
@@ -81,9 +90,11 @@ mod tests {
 
     #[test]
     fn parses_flags() {
-        let a = parse("--synth --preset Vortex --tour 4 --size 1280x720 --render-scale 0.5")
+        let a = parse("--synth --preset Vortex --tour 4 --size 1280x720 --render-scale 0.5 --auto 8 --transition clock")
             .unwrap()
             .unwrap();
+        assert_eq!(a.auto, Some(8.0));
+        assert_eq!(a.transition.as_deref(), Some("clock"));
         assert!(a.synth);
         assert_eq!(a.preset.as_deref(), Some("Vortex"));
         assert_eq!(a.tour, Some(4.0));
