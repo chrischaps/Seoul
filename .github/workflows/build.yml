@@ -44,22 +44,28 @@ jobs:
           codesign --verify --deep --strict "$app"
           plutil -lint "$app/Contents/Info.plist"
           lipo -archs "$app/Contents/MacOS/seoul"
-      # Best effort: render a real frame if the runner's virtual GPU allows.
-      # Launched from / like Finder would, so the Application Support setup
-      # and the Mac fonts get exercised too.
-      - name: Render a frame (best effort)
+      # Best effort: render real frames on the runner's virtual GPU. --record
+      # steps time by a fixed dt, so frames match a full-speed Mac however
+      # slow the runner is; the toast on the Ink → Dancheong advance shows
+      # the Mac fonts. Launched from / like Finder would, so the Application
+      # Support setup is exercised too.
+      - name: Render frames (best effort)
         continue-on-error: true
         run: |
           app="$PWD/$(ls -d dist/*/Seoul.app)"
+          rec="$RUNNER_TEMP/rec"
           cd /
-          "$app/Contents/MacOS/seoul" --synth --preset Ink --screenshot-at 2 --size 1280x720 > "$RUNNER_TEMP/seoul.log" 2>&1 &
+          "$app/Contents/MacOS/seoul" --record "$rec" --record-seconds 6 --record-fps 30 --record-hud \
+            --sequence Ink,Dancheong --auto 2 --size 1280x720 > "$RUNNER_TEMP/seoul.log" 2>&1 &
           pid=$!
-          sleep 20
+          for _ in $(seq 120); do kill -0 $pid 2>/dev/null || break; sleep 2; done
           kill $pid 2>/dev/null || true
           cat "$RUNNER_TEMP/seoul.log"
           mkdir -p "$RUNNER_TEMP/render"
-          cp "$HOME/Library/Application Support/Seoul/screenshots/"*.png "$RUNNER_TEMP/render/"
           cp "$RUNNER_TEMP/seoul.log" "$RUNNER_TEMP/render/"
+          for n in 00029 00059 00089 00119 00149 00179; do
+            cp "$rec/frame_$n.png" "$RUNNER_TEMP/render/" || true
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true
