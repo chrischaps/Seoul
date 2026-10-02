@@ -12,6 +12,7 @@ Deeper docs: `docs/ARCHITECTURE.md` (threads, analysis math, pass graph, transit
 
 ```bash
 cargo run --release        # primary — debug builds are too slow for 60 fps
+run.bat / .\run.ps1        # same, from any cwd; extra args pass through
 cargo test                 # unit tests live alongside the code
 cargo test <name>
 RUST_LOG=seoul=debug cargo run --release
