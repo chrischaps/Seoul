@@ -46,11 +46,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let checker = f32((i32(cell.x) + i32(cell.y)) & 1);
     let blue_lit = interior * checker;
 
-    let blue_contrib = palette.colors[1].rgb * blue_lit * 0.030;
+    let blue_contrib = palette.colors[1].rgb * blue_lit * 0.040;
 
     // Pink-white outline at the perimeter, full strength (no dither).
     let pinkish = mix(palette.colors[3].rgb, vec3<f32>(1.0, 0.86, 0.93), 0.35);
-    let edge_contrib = pinkish * on_edge * (0.18 + u.beat * 0.10);
+    let edge_contrib = pinkish * on_edge * (0.08 + u.beat * 0.06);
 
     return vec4<f32>(blue_contrib + edge_contrib, 1.0);
 }

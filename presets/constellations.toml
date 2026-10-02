@@ -4,12 +4,17 @@ description = "Dark field of twinkling stars, sparse, beat-triggered flashes."
 
 [mapping]
 zoom        = "1.0 + bass * 0.004"
-rotation    = "0.001 + mid * 0.003"
-warp_amount = "0.002 + beat * 0.012"
+rotation    = "0.0003 + mid * 0.0006"
+warp_amount = "0.0004 + beat * 0.002"
 decay       = "0.930 + treble * 0.010"
 
 [shader]
 composite = "constellations.wgsl"
+
+[post]
+bloom = 0.9
+bloom_threshold = 0.3
+vignette = 0.45
 
 [palette]
 color0 = [0.05, 0.08, 0.18, 1.0]   # deep midnight blue (unused as bg — additive)

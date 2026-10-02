@@ -11,6 +11,10 @@ decay       = "0.970 + treble * 0.012"
 [shader]
 composite = "plasma.wgsl"
 
+[post]
+saturation = 1.35
+contrast = 1.15
+
 [palette]
 color0 = [0.85, 0.25, 0.45, 1.0]   # magenta
 color1 = [0.30, 0.35, 0.95, 1.0]   # electric blue

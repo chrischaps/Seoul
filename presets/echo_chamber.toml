@@ -1,13 +1,13 @@
 name = "Echo Chamber"
 author = "seoul"
-description = "Three sparks trace Lissajous orbits; hue drift turns their trails to ribbons, folded four ways with a flipped echo."
+description = "Five sparks trace Lissajous orbits; hue drift turns their trails to ribbons, folded four ways with a flipped echo."
 
 [mapping]
-zoom        = "1.010 + bass * 0.015"
+zoom        = "1.004 + bass * 0.010"
 rotation    = "0.004 * sin(time * 0.13)"
 warp_amount = "0.002 + beat * 0.005"
-decay       = "0.962"
-hue_shift   = "0.4"
+decay       = "0.976"
+hue_shift   = "1.3"
 
 [shader]
 composite = "echo_chamber.wgsl"

@@ -8,7 +8,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let p = centered(in.uv);
     let r = length(p);
 
-    let drop = exp(-r * r * (110.0 - 60.0 * u.bass)) * (0.015 + u.beat * 0.10);
+    let drop = exp(-r * r * (140.0 - 70.0 * u.bass)) * (0.004 + u.beat * 0.045);
     var col = palette.colors[1].rgb * drop;
 
     let theta = atan2(p.y, p.x);

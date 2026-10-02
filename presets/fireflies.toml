@@ -1,0 +1,39 @@
+name = "Fireflies"
+author = "seoul"
+description = "A summer field after dark: fireflies drift on slow eddies and blink in and out; the bass stirs them."
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+dy          = "-0.0002"
+decay       = "0.80"
+
+[shader]
+composite = "fireflies.wgsl"
+
+[palette]
+color0 = [0.02, 0.06, 0.04, 1.0]   # night meadow
+color1 = [0.72, 1.00, 0.30, 1.0]   # firefly green
+color2 = [1.00, 0.78, 0.32, 1.0]   # warm amber
+color3 = [0.92, 1.00, 0.70, 1.0]   # pale glow
+
+[particles]
+count      = 650
+spawn      = "random"
+speed      = 0.006
+flow       = 0.12
+flow_scale = 1.2
+drag       = 1.5
+size       = 6.0
+life       = 2.6
+color      = 1
+burst      = 0.0
+bass_push  = 0.0
+intensity  = 0.45
+
+[post]
+bloom           = 0.9
+bloom_threshold = 0.25
+vignette        = 0.5
+grain           = 0.3

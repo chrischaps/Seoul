@@ -27,6 +27,6 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let arms = col_ramp * arm_mask * mid_ring;
     let blaze = palette.colors[3].rgb * core * (0.6 + u.beat * 0.6);
 
-    let intensity = 0.040 + u.bass * 0.025 + u.beat * 0.030;
+    let intensity = 0.07 + u.bass * 0.04 + u.beat * 0.05;
     return vec4<f32>((arms + blaze) * intensity, 1.0);
 }

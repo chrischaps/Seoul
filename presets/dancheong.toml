@@ -1,0 +1,26 @@
+name = "Dancheong"
+author = "seoul"
+description = "Petal bands in the palette of Korean palace eaves, stepping outward on every beat, folded eight ways."
+
+[mapping]
+zoom        = "1.004 + bass * 0.006"
+rotation    = "0.0015 * sin(time * 0.2)"
+warp_amount = "0.0"
+decay       = "0.90"
+
+[shader]
+composite = "dancheong.wgsl"
+
+# Traditional dancheong pigments.
+[palette]
+color0 = [0.16, 0.55, 0.42, 1.0]   # noklo green
+color1 = [0.88, 0.25, 0.16, 1.0]   # juhong vermilion
+color2 = [0.14, 0.27, 0.66, 1.0]   # gunchung cobalt
+color3 = [0.90, 0.66, 0.25, 1.0]   # hwangto ochre
+
+[post]
+mirror     = "kaleido:8"
+chroma     = "beat * 0.35"
+saturation = 1.2
+bloom      = 0.4
+vignette   = 0.45

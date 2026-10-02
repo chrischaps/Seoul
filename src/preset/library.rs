@@ -363,6 +363,10 @@ impl PresetLibrary {
         self.presets.len()
     }
 
+    pub fn name_at(&self, idx: usize) -> &str {
+        &self.presets[idx].spec.name
+    }
+
     pub fn find(&self, name: &str) -> Option<usize> {
         self.presets.iter().position(|p| p.spec.name.eq_ignore_ascii_case(name))
     }

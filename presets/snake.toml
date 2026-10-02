@@ -11,6 +11,12 @@ decay       = "0.978 + treble * 0.012"
 [shader]
 composite = "snake.wgsl"
 
+[post]
+# The look of the LED panel this preset was modeled on (ref/).
+led_mask = true
+led_pitch = 7.0
+bloom = 0.5
+
 [palette]
 color0 = [0.10, 0.18, 0.55, 1.0]   # deep blue (rim)
 color1 = [0.30, 0.55, 0.95, 1.0]   # mid blue (band)

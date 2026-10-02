@@ -19,7 +19,9 @@ OPTIONS:
     --fullscreen            Start borderless fullscreen
     --screenshot-at <SECS>  Save a screenshot after SECS seconds
     --tour <SECS>           Visit every preset for SECS seconds, screenshot each
-                            into screenshots/tour/, then exit
+                            into screenshots/tour/, then exit. With --preset,
+                            only presets whose name contains it.
+    --tour-shots <N>        Screenshots per preset during a tour (default 1)
     -h, --help              Show this help
 ";
 
@@ -35,6 +37,7 @@ pub struct Args {
     pub fullscreen: bool,
     pub screenshot_at: Option<f32>,
     pub tour: Option<f32>,
+    pub tour_shots: Option<u32>,
 }
 
 impl Args {
@@ -58,6 +61,7 @@ impl Args {
                 "--render-scale" => args.render_scale = Some(num(&value("--render-scale")?)?),
                 "--screenshot-at" => args.screenshot_at = Some(num(&value("--screenshot-at")?)?),
                 "--tour" => args.tour = Some(num(&value("--tour")?)?),
+                "--tour-shots" => args.tour_shots = Some(value("--tour-shots")?.parse()?),
                 "--size" => {
                     let v = value("--size")?;
                     let (w, h) = v

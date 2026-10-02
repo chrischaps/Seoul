@@ -1,0 +1,26 @@
+name = "Han River"
+author = "seoul"
+description = "Seoul at night: a skyline that rises with the spectrum, Banpo Bridge's rainbow fountain falling on the beat, all mirrored in rippling water."
+edge = "clamp"
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0004"
+decay       = "0.90 + treble * 0.02"
+
+[shader]
+composite = "han_river.wgsl"
+warp      = "han_river_warp.wgsl"
+
+[palette]
+color0 = [0.04, 0.07, 0.18, 1.0]   # night navy
+color1 = [1.00, 0.62, 0.25, 1.0]   # sodium amber
+color2 = [0.95, 0.35, 0.60, 1.0]   # neon pink
+color3 = [0.92, 0.94, 1.00, 1.0]   # moonlight
+
+[post]
+bloom           = 0.75
+bloom_threshold = 0.35
+vignette        = 0.4
+grain           = 0.25

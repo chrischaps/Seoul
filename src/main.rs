@@ -72,8 +72,24 @@ impl AudioInput {
 /// `--tour`: visit every preset, screenshot each, exit.
 struct Tour {
     dwell: f32,
+    /// Screenshots per preset, evenly spaced through the dwell.
+    shots: u32,
+    taken: u32,
     index: usize,
     since: Instant,
+    /// Only visit presets whose name contains this (case-insensitive).
+    filter: Option<String>,
+}
+
+impl Tour {
+    /// Next preset index at or after `from` that passes the filter.
+    fn next_match(&self, lib: &preset::PresetLibrary, from: usize) -> Option<usize> {
+        (from..lib.len()).find(|&i| {
+            self.filter
+                .as_ref()
+                .is_none_or(|f| lib.name_at(i).to_ascii_lowercase().contains(&f.to_ascii_lowercase()))
+        })
+    }
 }
 
 struct App {
@@ -170,22 +186,32 @@ impl App {
         }
 
         if let Some(tour) = self.tour.as_mut()
-            && tour.since.elapsed().as_secs_f32() >= tour.dwell
+            && tour.since.elapsed().as_secs_f32() >= tour.dwell * (tour.taken + 1) as f32 / tour.shots as f32
         {
             let lib = renderer.library();
             let name = lib.current_name().to_owned();
-            let path = PathBuf::from("screenshots/tour")
-                .join(format!("{:02}-{}.png", tour.index, name.to_ascii_lowercase().replace(' ', "-")));
+            let slug = name.to_ascii_lowercase().replace(' ', "-");
+            let file = if tour.shots > 1 {
+                format!("{:02}-{slug}-{}.png", tour.index, tour.taken + 1)
+            } else {
+                format!("{:02}-{slug}.png", tour.index)
+            };
+            let path = PathBuf::from("screenshots/tour").join(file);
             match renderer.screenshot(ctx, &path) {
                 Ok(()) => info!(preset = name, path = %path.display(), "tour screenshot"),
                 Err(e) => warn!("tour screenshot failed: {e:#}"),
             }
-            tour.index += 1;
-            if tour.index >= renderer.library().len() {
-                self.exit_requested = true;
-            } else {
-                renderer.library_mut().cut_to(tour.index);
-                tour.since = Instant::now();
+            tour.taken += 1;
+            if tour.taken >= tour.shots {
+                match tour.next_match(renderer.library(), tour.index + 1) {
+                    None => self.exit_requested = true,
+                    Some(i) => {
+                        tour.index = i;
+                        tour.taken = 0;
+                        renderer.library_mut().cut_to(i);
+                        tour.since = Instant::now();
+                    }
+                }
             }
         }
 
@@ -324,19 +350,38 @@ impl ApplicationHandler for App {
             }
         }
 
-        if let Some(name) = self.args.preset.as_ref().or(self.config.start_preset.as_ref()) {
+        // In a tour, --preset is a name filter, handled below.
+        let start = if self.args.tour.is_some() {
+            None
+        } else {
+            self.args.preset.as_ref().or(self.config.start_preset.as_ref())
+        };
+        if let Some(name) = start {
             match renderer.library().find(name) {
                 Some(i) => renderer.library_mut().cut_to(i),
                 None => warn!(preset = name, "no such preset; starting on default"),
             }
         }
         if let Some(dwell) = self.args.tour {
-            renderer.library_mut().cut_to(0);
-            self.tour = Some(Tour {
+            let mut tour = Tour {
                 dwell,
+                shots: self.args.tour_shots.unwrap_or(1).max(1),
+                taken: 0,
                 index: 0,
                 since: Instant::now(),
-            });
+                filter: self.args.preset.clone(),
+            };
+            match tour.next_match(renderer.library(), 0) {
+                Some(i) => {
+                    tour.index = i;
+                    renderer.library_mut().cut_to(i);
+                    self.tour = Some(tour);
+                }
+                None => {
+                    warn!("--tour: no preset matches the --preset filter");
+                    self.exit_requested = true;
+                }
+            }
         }
 
         window.request_redraw();

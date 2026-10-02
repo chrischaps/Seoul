@@ -1,0 +1,25 @@
+name = "LED Wall"
+author = "seoul"
+description = "A mirrored spectrum poured into a dot-matrix LED panel, after the one in ref/."
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+sy          = "1.004 + bass * 0.004"
+decay       = "0.88"
+
+[shader]
+composite = "led_wall.wgsl"
+
+[palette]
+color0 = [0.10, 0.25, 0.90, 1.0]   # deep LED blue
+color1 = [0.25, 0.75, 1.00, 1.0]   # cyan
+color2 = [0.85, 0.35, 0.95, 1.0]   # violet
+color3 = [1.00, 0.88, 0.95, 1.0]   # pink-white rim
+
+[post]
+led_mask  = true
+led_pitch = 10.0
+bloom     = 0.55
+vignette  = 0.2
