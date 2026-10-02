@@ -24,7 +24,6 @@ use crate::cli::Args;
 use crate::config::{Config, ConfigWatch};
 use crate::preset::curation::{Curation, STATE_PATH};
 use crate::preset::library::LibrarySettings;
-use crate::preset::transition::TransitionStyle;
 use crate::render::{RenderContext, Renderer, RendererOptions};
 
 /// Merge config with command-line overrides into library behavior.
@@ -34,7 +33,7 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
         auto_advance: cfg.auto.enabled,
         auto_min: cfg.auto.min_interval,
         auto_max: cfg.auto.max_interval.max(cfg.auto.min_interval),
-        transition_style: cfg.transition.style().unwrap_or(None),
+        transition_styles: cfg.transition.styles().unwrap_or_default(),
         transition_duration: cfg.transition.duration,
     };
     if let Some(secs) = args.auto {
@@ -43,15 +42,51 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
         s.auto_max = secs * 1.5;
     }
     if let Some(style) = &args.transition {
-        match style.as_str() {
-            "random" => s.transition_style = None,
-            other => match TransitionStyle::parse(other) {
-                Some(t) => s.transition_style = Some(t),
-                None => warn!(style = other, "unknown --transition style; using config"),
-            },
+        match config::parse_styles(style) {
+            Ok(styles) => s.transition_styles = styles,
+            Err(e) => warn!("--transition: {e}; using config"),
         }
     }
     s
+}
+
+/// `--record`: renders offline at a fixed timestep. The synth track is
+/// generated and analyzed in lockstep — exactly one frame of audio per
+/// rendered frame — so the footage is smooth and beat-locked no matter how
+/// long a frame takes to save.
+struct Recorder {
+    synth: audio::synth::Synth,
+    analyzer: audio::analysis::Analyzer,
+    dir: PathBuf,
+    fps: f32,
+    frame: u32,
+    frames: u32,
+    /// Fractional samples owed when the sample rate doesn't divide evenly.
+    carry: f64,
+}
+
+impl Recorder {
+    fn new(dir: PathBuf, seconds: f32, fps: f32) -> Self {
+        Self {
+            synth: audio::synth::Synth::default(),
+            analyzer: audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE),
+            dir,
+            fps,
+            frame: 0,
+            frames: (seconds * fps).round().max(1.0) as u32,
+            carry: 0.0,
+        }
+    }
+
+    /// Advance the music by one frame and return the analysis.
+    fn step(&mut self) -> AudioFeatures {
+        self.carry += audio::synth::SAMPLE_RATE as f64 / self.fps as f64;
+        let n = self.carry.floor() as usize;
+        self.carry -= n as f64;
+        let samples: Vec<f32> = (0..n).map(|_| self.synth.next_sample()).collect();
+        self.analyzer.push(&samples);
+        *self.analyzer.features()
+    }
 }
 
 /// Where audio comes from. Loopback must be polled on this thread because
@@ -59,6 +94,7 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
 enum AudioInput {
     Loopback(Box<LoopbackCapture>),
     Synth,
+    Offline(Box<Recorder>),
 }
 
 impl AudioInput {
@@ -132,9 +168,12 @@ impl App {
             return;
         };
 
-        let features = *self.features.read();
+        let features = match &mut self.audio {
+            AudioInput::Offline(rec) => rec.step(),
+            _ => *self.features.read(),
+        };
         let status = match &self.audio {
-            AudioInput::Synth => "synth test track".to_owned(),
+            AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
             AudioInput::Loopback(c) => c.device_name().map_or_else(|| "no audio — retrying".to_owned(), str::to_owned),
         };
         renderer.hud_mut().set_audio_status(&status);
@@ -169,6 +208,22 @@ impl App {
         ctx.queue.present(frame);
         if std::mem::take(&mut self.reconfigure) {
             ctx.surface.configure(&ctx.device, &ctx.config);
+        }
+
+        if let AudioInput::Offline(rec) = &mut self.audio {
+            let path = rec.dir.join(format!("frame_{:05}.png", rec.frame));
+            if let Err(e) = renderer.screenshot(ctx, &path) {
+                error!("recording failed at frame {}: {e:#}", rec.frame);
+                self.exit_requested = true;
+            }
+            rec.frame += 1;
+            if rec.frame % (rec.fps as u32 * 2).max(1) == 0 {
+                info!(frame = rec.frame, of = rec.frames, "recording");
+            }
+            if rec.frame >= rec.frames {
+                info!(dir = %rec.dir.display(), frames = rec.frames, "recording finished");
+                self.exit_requested = true;
+            }
         }
 
         // Screenshots re-run the display passes offscreen for the frame just drawn.
@@ -327,7 +382,13 @@ impl ApplicationHandler for App {
             Some((w, h)) => PhysicalSize::new(w, h).into(),
             None => LogicalSize::new(1280, 720).into(),
         };
-        let attrs = Window::default_attributes().with_title("Seoul").with_inner_size(size);
+        // Batch runs (recording, tours) shouldn't steal focus from whatever
+        // the user is typing into.
+        let batch = self.args.record.is_some() || self.args.tour.is_some();
+        let attrs = Window::default_attributes()
+            .with_title("Seoul")
+            .with_inner_size(size)
+            .with_active(!batch);
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
 
         let ctx = pollster::block_on(RenderContext::new(window.clone())).expect("failed to create render context");
@@ -348,6 +409,18 @@ impl ApplicationHandler for App {
                 hud.enabled = false;
                 hud.skip_intro();
             }
+        }
+
+        if let Some(names) = &self.args.sequence
+            && let Some(first) = renderer.library_mut().set_sequence(names)
+        {
+            renderer.library_mut().cut_to(first);
+        }
+        if let AudioInput::Offline(rec) = &self.audio {
+            renderer.set_fixed_dt(Some(1.0 / rec.fps));
+            let hud = renderer.hud_mut();
+            hud.enabled = self.args.record_hud;
+            hud.skip_intro();
         }
 
         // In a tour, --preset is a name filter, handled below.
@@ -418,7 +491,7 @@ impl ApplicationHandler for App {
                         ..
                     },
                 ..
-            } => self.on_key(event_loop, kc),
+            } if !matches!(self.audio, AudioInput::Offline(_)) => self.on_key(event_loop, kc),
             WindowEvent::RedrawRequested => {
                 self.render();
                 if self.exit_requested {
@@ -458,7 +531,12 @@ fn main() -> Result<()> {
     };
 
     let (features, source_tx) = audio::analysis::spawn_analysis();
-    let audio = if args.synth {
+    let audio = if let Some(dir) = &args.record {
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir)?;
+        let fps = args.record_fps.unwrap_or(60.0).clamp(1.0, 240.0);
+        AudioInput::Offline(Box::new(Recorder::new(dir, args.record_seconds.unwrap_or(10.0), fps)))
+    } else if args.synth {
         audio::synth::spawn_synth(source_tx);
         AudioInput::Synth
     } else {

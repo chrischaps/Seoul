@@ -86,18 +86,24 @@ impl Default for TransitionConfig {
 }
 
 impl TransitionConfig {
-    /// `None` means pick a random style per transition.
-    pub fn style(&self) -> Result<Option<TransitionStyle>> {
-        if self.style.eq_ignore_ascii_case("random") {
-            return Ok(None);
-        }
-        TransitionStyle::parse(&self.style).map(Some).ok_or_else(|| {
-            anyhow!(
-                "transition.style '{}' (crossfade|dissolve|radial|clock|zoom|random)",
-                self.style
-            )
-        })
+    /// Styles to cycle through; empty means a random style per transition.
+    pub fn styles(&self) -> Result<Vec<TransitionStyle>> {
+        parse_styles(&self.style)
     }
+}
+
+/// "random", one style, or a comma-separated list to cycle through.
+pub fn parse_styles(s: &str) -> Result<Vec<TransitionStyle>> {
+    if s.trim().eq_ignore_ascii_case("random") {
+        return Ok(Vec::new());
+    }
+    s.split(',')
+        .map(|part| {
+            TransitionStyle::parse(part.trim()).ok_or_else(|| {
+                anyhow!("transition style '{}' (crossfade|dissolve|radial|clock|zoom|random)", part.trim())
+            })
+        })
+        .collect()
 }
 
 /// Global look defaults; presets' `[post]` tables override these.
@@ -155,7 +161,7 @@ impl Default for HudConfig {
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let cfg: Config = toml::from_str(text)?;
-        cfg.transition.style()?;
+        cfg.transition.styles()?;
         Ok(cfg)
     }
 
@@ -234,7 +240,7 @@ mod tests {
         let c = Config::parse("").unwrap();
         assert!(!c.auto.enabled);
         assert_eq!(c.render_scale, 1.0);
-        assert_eq!(c.transition.style().unwrap(), None);
+        assert!(c.transition.styles().unwrap().is_empty());
         assert_eq!(c.post.resolve(), PostParams::default());
     }
 
@@ -248,7 +254,11 @@ mod tests {
         assert!(c.auto.enabled);
         assert_eq!(c.auto.min_interval, 10.0);
         assert_eq!(c.auto.max_interval, 45.0);
-        assert_eq!(c.transition.style().unwrap(), Some(TransitionStyle::Dissolve));
+        assert_eq!(c.transition.styles().unwrap(), vec![TransitionStyle::Dissolve]);
+        assert_eq!(
+            parse_styles("dissolve, clock").unwrap(),
+            vec![TransitionStyle::Dissolve, TransitionStyle::Clock]
+        );
         assert_eq!(c.post.resolve().bloom, 0.9);
     }
 

@@ -13,7 +13,15 @@ OPTIONS:
     --synth                 Use the built-in test track instead of system audio
     --preset <NAME>         Start on this preset
     --auto <SECS>           Auto-advance every SECS seconds (on a beat when possible)
-    --transition <STYLE>    crossfade | dissolve | radial | clock | zoom | random
+    --transition <STYLE>    crossfade | dissolve | radial | clock | zoom | random,
+                            or a comma-separated list to cycle through
+    --sequence <A,B,...>    Advance through these presets in order instead of shuffling
+    --record <DIR>          Render offline to DIR/frame_00000.png… at a fixed
+                            timestep, driving the synth track in lockstep (implies
+                            --synth, hides the HUD), then exit
+    --record-seconds <S>    Length of a --record (default 10)
+    --record-fps <N>        Frame rate of a --record (default 60)
+    --record-hud            Keep the HUD (toasts; stats if [hud] stats = true) in a --record
     --render-scale <F>      Feedback resolution relative to the window (0.25–2.0)
     --size <WxH>            Initial window size in physical pixels
     --fullscreen            Start borderless fullscreen
@@ -38,6 +46,11 @@ pub struct Args {
     pub screenshot_at: Option<f32>,
     pub tour: Option<f32>,
     pub tour_shots: Option<u32>,
+    pub sequence: Option<Vec<String>>,
+    pub record: Option<String>,
+    pub record_seconds: Option<f32>,
+    pub record_fps: Option<f32>,
+    pub record_hud: bool,
 }
 
 impl Args {
@@ -53,6 +66,7 @@ impl Args {
             let mut value = |name: &str| it.next().ok_or_else(|| anyhow!("{name} needs a value"));
             match flag.as_str() {
                 "--synth" => args.synth = true,
+                "--record-hud" => args.record_hud = true,
                 "--fullscreen" => args.fullscreen = true,
                 "--preset" => args.preset = Some(value("--preset")?),
                 "--config" => args.config = Some(value("--config")?),
@@ -62,6 +76,12 @@ impl Args {
                 "--screenshot-at" => args.screenshot_at = Some(num(&value("--screenshot-at")?)?),
                 "--tour" => args.tour = Some(num(&value("--tour")?)?),
                 "--tour-shots" => args.tour_shots = Some(value("--tour-shots")?.parse()?),
+                "--sequence" => {
+                    args.sequence = Some(value("--sequence")?.split(',').map(|s| s.trim().to_owned()).collect())
+                }
+                "--record" => args.record = Some(value("--record")?),
+                "--record-seconds" => args.record_seconds = Some(num(&value("--record-seconds")?)?),
+                "--record-fps" => args.record_fps = Some(num(&value("--record-fps")?)?),
                 "--size" => {
                     let v = value("--size")?;
                     let (w, h) = v
@@ -104,6 +124,12 @@ mod tests {
         assert_eq!(a.tour, Some(4.0));
         assert_eq!(a.size, Some((1280, 720)));
         assert_eq!(a.render_scale, Some(0.5));
+        let r = parse("--record out --record-seconds 12 --sequence Ink,Han%River")
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.record.as_deref(), Some("out"));
+        assert_eq!(r.record_seconds, Some(12.0));
+        assert_eq!(r.sequence.unwrap(), vec!["Ink".to_owned(), "Han%River".to_owned()]);
     }
 
     #[test]

@@ -46,6 +46,10 @@ pub struct Renderer {
     start_time: Instant,
     last_render_time: Option<Instant>,
     frame: u64,
+    /// Offline rendering: advance exactly this much per frame instead of
+    /// following the wall clock.
+    fixed_dt: Option<f32>,
+    sim_time: f32,
 }
 
 impl Renderer {
@@ -115,6 +119,8 @@ impl Renderer {
             start_time: Instant::now(),
             last_render_time: None,
             frame: 0,
+            fixed_dt: None,
+            sim_time: 0.0,
         })
     }
 
@@ -128,6 +134,11 @@ impl Renderer {
 
     pub fn hud_mut(&mut self) -> &mut Hud {
         &mut self.hud
+    }
+
+    /// Switch to a fixed timestep (offline recording) or back to real time.
+    pub fn set_fixed_dt(&mut self, dt: Option<f32>) {
+        self.fixed_dt = dt;
     }
 
 
@@ -167,13 +178,22 @@ impl Renderer {
         // The render thread owns the clock: audio analysis can stall (WASAPI
         // loopback sends nothing during silence) but visuals must keep moving.
         let now = Instant::now();
-        let dt = match self.last_render_time.replace(now) {
-            Some(prev) => (now - prev).as_secs_f32().min(0.1),
-            None => 1.0 / 60.0,
+        let (dt, time) = match self.fixed_dt {
+            Some(step) => {
+                self.sim_time += step;
+                (step, self.sim_time)
+            }
+            None => {
+                let dt = match self.last_render_time.replace(now) {
+                    Some(prev) => (now - prev).as_secs_f32().min(0.1),
+                    None => 1.0 / 60.0,
+                };
+                (dt, (now - self.start_time).as_secs_f32())
+            }
         };
         let (fw, fh) = self.feedback.size();
         let mut f = *features;
-        f.time = (now - self.start_time).as_secs_f32();
+        f.time = time;
         f.dt = dt;
         f.frame = self.frame as f32;
         f.resolution = [fw as f32, fh as f32];

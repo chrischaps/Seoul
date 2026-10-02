@@ -89,8 +89,8 @@ pub struct LibrarySettings {
     pub auto_advance: bool,
     pub auto_min: f32,
     pub auto_max: f32,
-    /// `None` = random style per transition.
-    pub transition_style: Option<TransitionStyle>,
+    /// Styles to cycle through; empty = random style per transition.
+    pub transition_styles: Vec<TransitionStyle>,
     pub transition_duration: f32,
 }
 
@@ -101,7 +101,7 @@ impl Default for LibrarySettings {
             auto_advance: false,
             auto_min: 20.0,
             auto_max: 45.0,
-            transition_style: None,
+            transition_styles: Vec::new(),
             transition_duration: 3.0,
         }
     }
@@ -113,6 +113,10 @@ pub struct PresetLibrary {
     settings: LibrarySettings,
     curation: Curation,
     bag: ShuffleBag,
+    /// Fixed playing order (by index) used instead of the shuffle bag.
+    sequence: Vec<usize>,
+    sequence_pos: usize,
+    style_cursor: usize,
     locked: bool,
     last_advance_time: f32,
     last_beat_count: f32,
@@ -198,6 +202,9 @@ impl PresetLibrary {
             settings,
             curation,
             bag: ShuffleBag::default(),
+            sequence: Vec::new(),
+            sequence_pos: 0,
+            style_cursor: 0,
             locked: false,
             last_advance_time: 0.0,
             last_beat_count: 0.0,
@@ -397,8 +404,33 @@ impl PresetLibrary {
 
     // ---- Navigation --------------------------------------------------------
 
+    /// Play these presets in order (instead of shuffling) whenever the
+    /// library advances on its own or R is pressed. Unknown names are
+    /// skipped with a warning. Returns the first resolved index.
+    pub fn set_sequence(&mut self, names: &[String]) -> Option<usize> {
+        self.sequence = names
+            .iter()
+            .filter_map(|n| {
+                let found = self.find(n);
+                if found.is_none() {
+                    warn!(preset = n, "--sequence: no such preset");
+                }
+                found
+            })
+            .collect();
+        self.sequence_pos = 0;
+        self.sequence.first().copied()
+    }
+
     fn go(&mut self, target: usize) {
-        let style = self.settings.transition_style.unwrap_or_else(TransitionStyle::random);
+        let styles = &self.settings.transition_styles;
+        let style = if styles.is_empty() {
+            TransitionStyle::random()
+        } else {
+            let s = styles[self.style_cursor % styles.len()];
+            self.style_cursor += 1;
+            s
+        };
         let seed = rand::rng().random_range(0.0..1.0);
         self.state.begin_transition(target, style, seed);
     }
@@ -427,6 +459,12 @@ impl PresetLibrary {
     /// Shuffle-bag pick: everything visible plays once (favorites twice)
     /// before anything repeats.
     pub fn random(&mut self) {
+        if !self.sequence.is_empty() {
+            self.sequence_pos = (self.sequence_pos + 1) % self.sequence.len();
+            let next = self.sequence[self.sequence_pos];
+            self.go(next);
+            return;
+        }
         let eligible: Vec<(usize, u32)> = (0..self.presets.len())
             .filter(|&i| self.visible(i))
             .map(|i| (i, if self.curation.is_favorite(&self.presets[i].spec.name) { 2 } else { 1 }))
@@ -505,7 +543,7 @@ impl PresetLibrary {
         if since >= s.auto_max || (since >= s.auto_min && on_downbeat) {
             self.last_advance_time = features.time;
             self.random();
-            info!(preset = self.current_name(), "auto-advance");
+            info!(preset = self.current_name(), frame = features.frame as u64, "auto-advance");
         }
     }
 

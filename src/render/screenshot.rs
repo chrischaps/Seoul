@@ -118,6 +118,8 @@ impl CaptureTarget {
         let mut enc = png::Encoder::new(BufWriter::new(file), w, h);
         enc.set_color(png::ColorType::Rgba);
         enc.set_depth(png::BitDepth::Eight);
+        // Recordings write thousands of frames; speed beats a few % of size.
+        enc.set_compression(png::Compression::Fast);
         enc.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
         enc.write_header()?.write_image_data(&pixels)?;
         Ok(())

@@ -15,7 +15,7 @@ use tracing::info;
 use crate::audio::analysis::AudioSource;
 use crate::audio::capture::RING_CAPACITY;
 
-const SAMPLE_RATE: u32 = 48_000;
+pub const SAMPLE_RATE: u32 = 48_000;
 const BPM: f32 = 124.0;
 /// Stay this far ahead of real time so the analysis thread never starves.
 const LEAD_SAMPLES: usize = 2048;
@@ -47,8 +47,10 @@ pub fn spawn_synth(sink: Sender<AudioSource>) {
         .expect("spawn synth thread");
 }
 
+/// The test track's generator. Public so `--record` can step it in lockstep
+/// with rendering instead of in real time.
 #[derive(Default)]
-struct Synth {
+pub struct Synth {
     n: u64,
     noise: u32,
     hat_prev: f32,
@@ -73,7 +75,7 @@ impl Synth {
         (x as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
 
-    fn next_sample(&mut self) -> f32 {
+    pub fn next_sample(&mut self) -> f32 {
         let t = self.n as f32 / SAMPLE_RATE as f32;
         self.n += 1;
 
