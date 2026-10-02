@@ -44,6 +44,28 @@ jobs:
           codesign --verify --deep --strict "$app"
           plutil -lint "$app/Contents/Info.plist"
           lipo -archs "$app/Contents/MacOS/seoul"
+      # Best effort: render a real frame if the runner's virtual GPU allows.
+      # Launched from / like Finder would, so the Application Support setup
+      # and the Mac fonts get exercised too.
+      - name: Render a frame (best effort)
+        continue-on-error: true
+        run: |
+          app="$PWD/$(ls -d dist/*/Seoul.app)"
+          cd /
+          "$app/Contents/MacOS/seoul" --synth --preset Ink --screenshot-at 2 --size 1280x720 > "$RUNNER_TEMP/seoul.log" 2>&1 &
+          pid=$!
+          sleep 20
+          kill $pid 2>/dev/null || true
+          cat "$RUNNER_TEMP/seoul.log"
+          mkdir -p "$RUNNER_TEMP/render"
+          cp "$HOME/Library/Application Support/Seoul/screenshots/"*.png "$RUNNER_TEMP/render/"
+          cp "$RUNNER_TEMP/seoul.log" "$RUNNER_TEMP/render/"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: macos-render
+          path: ${{ runner.temp }}/render
       - uses: actions/upload-artifact@v4
         with:
           name: macos
