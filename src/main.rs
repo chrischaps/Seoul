@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -503,7 +503,36 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Double-clicked, Windows hands Seoul a console of its own; close it so only
+/// the visualizer shows. Started from a terminal, the console is shared and
+/// stays, logs and all.
+#[cfg(windows)]
+fn release_own_console() {
+    use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+    let mut pids = [0u32; 2];
+    // SAFETY: the buffer outlives the call and its length is passed with it.
+    if unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) } == 1 {
+        unsafe { FreeConsole() };
+    }
+}
+
+/// Presets, settings, favorites and screenshots are relative paths. Launched
+/// from elsewhere (a shortcut, a file manager), work from the exe's folder.
+fn settle_working_dir() {
+    if Path::new("presets").is_dir() {
+        return;
+    }
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+    if let Some(dir) = exe_dir.filter(|d| d.join("presets").is_dir()) {
+        info!(dir = %dir.display(), "working from the exe's folder");
+        let _ = std::env::set_current_dir(dir);
+    }
+}
+
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    release_own_console();
+
     let Some(args) = Args::parse()? else {
         return Ok(());
     };
@@ -512,7 +541,8 @@ fn main() -> Result<()> {
         .unwrap_or_else(|_| "seoul=info,wgpu_core=warn,wgpu_hal=warn".into());
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    info!("seoul starting");
+    info!(version = env!("CARGO_PKG_VERSION"), "seoul starting");
+    settle_working_dir();
 
     let config_path = PathBuf::from(args.config.as_deref().unwrap_or(config::DEFAULT_PATH));
     let config = match Config::load(&config_path) {

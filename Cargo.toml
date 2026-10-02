@@ -23,6 +23,9 @@ rand = "0.10"
 png = "0.18.1"
 glyphon = "0.12"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
