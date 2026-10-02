@@ -1,252 +1,265 @@
 # Seoul — Implementation Guide
 
-An in-depth walkthrough of how `seoul` captures audio, extracts features, and renders feedback-driven visuals. For a quick orientation and commands, see `CLAUDE.md`.
+How Seoul turns system audio into feedback-driven visuals: threads, the
+analysis math, the per-frame GPU pass graph, the preset system, and the
+invariants that keep it all consistent. For writing presets, see
+[`PRESETS.md`](PRESETS.md).
 
 ## Table of contents
 
-1. [Thread topology](#thread-topology)
-2. [Audio capture (WASAPI loopback)](#audio-capture-wasapi-loopback)
-3. [Feature extraction](#feature-extraction)
-4. [The `AudioFeatures` shared GPU type](#the-audiofeatures-shared-gpu-type)
-5. [Render pipeline](#render-pipeline)
-   - [Pass 1 — Warp](#pass-1--warp)
-   - [Pass 2 — Composite](#pass-2--composite)
-   - [Pass 3 — Blit](#pass-3--blit)
-6. [Preset system](#preset-system)
-7. [Mapping mini-language](#mapping-mini-language)
-8. [Hot-reload flow](#hot-reload-flow)
-9. [Preset state machine & auto-advance](#preset-state-machine--auto-advance)
-10. [Lifetime / ownership notes](#lifetime--ownership-notes)
+- [Thread topology](#thread-topology)
+- [Audio capture](#audio-capture)
+- [Feature extraction](#feature-extraction)
+- [`AudioFeatures`: CPU snapshot and GPU layout](#audiofeatures-cpu-snapshot-and-gpu-layout)
+- [Timing model](#timing-model)
+- [Render pass graph](#render-pass-graph)
+- [Transitions and masks](#transitions-and-masks)
+- [Preset system](#preset-system)
+- [Hot reload](#hot-reload)
+- [Curation, auto-advance, config](#curation-auto-advance-config)
+- [HUD](#hud)
+- [Verification tooling](#verification-tooling)
+- [Invariants checklist](#invariants-checklist)
 
 ---
 
 ## Thread topology
 
-Three long-lived execution contexts exchange data through lock-free, single-producer-single-consumer structures. No mutexes on the hot path.
-
 ```
- ┌─────────────────┐   ringbuf::HeapRb<f32>   ┌────────────────────┐   triple_buffer   ┌──────────────────┐
- │ cpal audio cb   │ ───────────────────────▶ │ analysis thread    │ ────────────────▶ │ winit event loop │
- │ (WASAPI driver) │    mono f32 samples      │ (seoul-analysis)   │  AudioFeatures    │ (render thread)  │
- └─────────────────┘    RING_CAPACITY=16_384  └────────────────────┘                   └──────────────────┘
+ WASAPI callback ──ring (f32 mono)──▶ analysis thread ──triple buffer──▶ render thread
+ (cpal, realtime)                     (Analyzer, ~5.8 ms hop)            (winit loop, wgpu)
+        ▲                                     ▲
+        └──── LoopbackCapture (main thread) ──┘  sends a new ring on (re)connect
 ```
 
-- **`ringbuf` (SPSC, lock-free)** — chosen because the audio callback is real-time and must never block. `producer.try_push` drops samples on overflow rather than stalling the driver thread.
-- **`triple_buffer` (SPSC, wait-free)** — the analysis thread writes a full `AudioFeatures` snapshot; the render thread reads whatever is most recent. No torn reads, no blocking, at most one frame of staleness.
+- **Audio callback** (`audio/capture.rs`): downmixes any sample format
+  (F32/F64/I16/I24/I32/U16) to mono f32 and pushes into a `ringbuf::HeapRb`.
+  Drops samples rather than blocking if analysis falls behind.
+- **Analysis thread** (`audio/analysis.rs`): drains the ring, runs the
+  `Analyzer`, publishes `AudioFeatures` into a `triple_buffer`. It receives
+  new `AudioSource`s (ring + sample rate) over an mpsc channel whenever
+  capture reconnects, rebuilding the analyzer if the rate changes.
+- **Render thread** (`main.rs`, `render/`): owns the window, polls capture,
+  reads the latest features, renders. `--synth` replaces loopback with a
+  generator thread (`audio/synth.rs`) feeding the same channel.
 
----
+## Audio capture
 
-## Audio capture (WASAPI loopback)
+cpal implements WASAPI loopback implicitly: `build_input_stream` on a
+*render* device, with the config from `default_output_config()`, makes cpal
+set `AUDCLNT_STREAMFLAGS_LOOPBACK`. This is still true in cpal 0.18.
 
-File: `src/audio/capture.rs`
+`LoopbackCapture` lives on the main thread (cpal streams are `!Send`) and
+is polled every frame:
 
-Loopback on WASAPI has a specific quirk: cpal does **not** expose a dedicated loopback API. Instead, the backend detects the pattern "call `build_input_stream` on the *default output device* with the device's `default_output_config()`" and internally sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. If you use `default_input_config()` or the default input device, you get microphone input instead of desktop audio. This is the single most brittle thing in the codebase.
-
-Three sample-format code paths (`F32`, `I16`, `U16`) each push downmixed mono into the ring. `push_mono_*` averages channels into a single sample per frame. Overflow is silently dropped — that's preferable to stalling the audio callback.
-
----
+- The stream's error callback sets an atomic flag for anything but `Xrun`.
+  cpal 0.18 reports `StreamInvalidated` / `DeviceNotAvailable` when the
+  default output device changes; the flag triggers a reconnect after 250 ms.
+- Every 2 s it also compares the default device's id with the active one
+  (belt and braces).
+- With no device, the app runs on silence and retries every 2 s.
 
 ## Feature extraction
 
-File: `src/audio/analysis.rs`
+`Analyzer` is a pure DSP core: push samples in, read `features()` out. It
+steps on a fixed **256-sample hop of the sample clock**, so every time
+constant is in seconds of audio and tests are deterministic.
 
-Runs on its own thread (`seoul-analysis`), sleeping 4 ms between batches. The rolling buffer holds the last `FFT_SIZE = 2048` samples; only when `MIN_NEW_SAMPLES = 256` fresh samples have accumulated does an analysis pass run — that caps work to roughly one pass per ~5 ms at 48 kHz.
+Per hop, over the last 2048 samples:
 
-Each pass:
+| Feature | Method |
+|---|---|
+| FFT | Hann window, real FFT, magnitudes normalized so a full-scale sine ≈ 1.0 |
+| `bass` `mid` `treble` | band *energy* (√Σm², not mean, so wide bands aren't diluted) in 40–250 Hz / 250 Hz–4 kHz / 4–16 kHz; **per-band AGC**: divide by a reference that tracks peaks and relaxes over ~3 s toward a −50 dBFS floor; then a follower (12 ms attack, 150 ms release) |
+| `*_att` | ~1 s follower of each band (MilkDrop semantics) |
+| `volume` | RMS with the same AGC + follower |
+| `spectrum[64]` | log-spaced 40 Hz–16 kHz, per-bin power in dB + 3 dB/octave tilt, mapped to 0..1 below a reference that tracks the loudest bin (6 dB/s release, −35 dB floor, 48 dB range); fast rise, slow fall |
+| `beat` | spectral flux of log-compressed magnitudes (kick band 30–180 Hz + ½ broadband), adaptive threshold mean + 1.5σ over ~1 s, one-hop-late peak picking, 180 ms refractory; envelope jumps to 1 and decays with τ = 100 ms |
+| `bpm`, `bpm_confidence` | inter-onset-interval histogram over the last 10 s (pairs 0.25–2 s apart, folded into 80–160 BPM, Gaussian-smeared, parabolic peak); confidence = mass near the peak |
+| `beat_phase` | oscillator at `bpm`, nudged toward 0 when a detected beat lands near it |
+| `waveform[512]` | trigger-aligned to the steepest rising zero crossing, auto-gained, 24-sample sin² taper at both ends (so circular plots close), light temporal smoothing |
 
-1. **Unroll** the ring into a linear scratch buffer (oldest → newest).
-2. **Waveform** snapshot — last 512 samples copied unwindowed, for oscilloscope-style shaders.
-3. **RMS volume** over the 2048 samples.
-4. **Window + FFT** — Hann window applied sample-wise, then `realfft` forward R2C transform into `mags` (the norms of the complex output).
-5. **Running peak normalization** — `running_peak *= PEAK_DECAY (0.9995)`, then lifted by the current frame's max. All spectrum/band values are divided by this peak so loud and quiet music share the same visual dynamic range without instantly crushing transients. The peak takes a few seconds to re-settle when content changes — that's intentional.
-6. **Log-spaced spectrum** — `build_log_bin_map` precomputes a table mapping each of 64 output bins to a contiguous range of FFT bins between 50 Hz and `min(Nyquist, 20 kHz)`. Each output bin averages (not sums) the underlying magnitudes, so bin width doesn't affect amplitude.
-7. **Band energies** — `bass` (60–250 Hz), `mid` (250–4000), `treble` (4k–Nyquist), computed from `mags` and peak-normalized. LERP-smoothed (`SMOOTHING = 0.35`) into the persistent `features` so visuals don't jitter.
-8. **Beat detection** — 64-slot circular history of smoothed bass. A beat fires when `bass > history_avg * BEAT_THRESHOLD_RATIO (1.4)` AND `bass > BEAT_MIN_ENERGY (0.12)`. `features.beat` snaps to 1.0 on trigger and decays by `BEAT_DECAY = 0.85` per pass — giving shader authors a short exponential tail to drive strobe effects.
-9. **Publish** — `out.write(features)` flips the triple buffer. The renderer sees this frame on its next read.
+**Silence.** WASAPI loopback delivers *no packets* while nothing plays. If
+nothing arrives for 40 ms, the thread feeds real-time zeros, so every
+envelope decays exactly as it would on digital silence; nothing latches.
 
----
+Tests (`audio::analysis::tests`) cover silence, sub-floor noise, kick
+detection at 100/120/140 BPM, envelope decay, waveform stability, taper,
+and per-band balance.
 
-## The `AudioFeatures` shared GPU type
+## `AudioFeatures`: CPU snapshot and GPU layout
 
-File: `src/audio/features.rs`
+`AudioFeatures` (`audio/features.rs`) is `#[repr(C)] Pod`: 20 scalars
+(including `resolution: vec2` on a 16-byte boundary), then
+`spectrum[64]` and `waveform[512]`. It is uploaded verbatim to a storage
+buffer bound by every composite, warp and particle pipeline. The WGSL
+mirror lives in **`shaders/common.wgsl`** and must match field for field; a
+`const` size assertion in Rust guards drift.
 
-```rust
-#[repr(C)]
-#[derive(Pod, Zeroable)]
-pub struct AudioFeatures {
-    pub bass, mid, treble, volume, beat, time: f32,
-    pub _pad: [f32; 2],                    // std140-style padding before arrays
-    pub spectrum: [f32; SPECTRUM_BINS],    // 64
-    pub waveform: [f32; WAVEFORM_SAMPLES], // 512
-}
-```
+## Timing model
 
-This struct is **simultaneously**:
-- A value read out of `triple_buffer` on the CPU.
-- The exact byte layout of the storage buffer at `@group(0) @binding(0)` in every composite shader (declared in `shaders/composite_prelude.wgsl`).
+- The **render thread owns the clock**: it stamps `time`, `dt`, `frame`,
+  `aspect`, `resolution` into its copy of the features each frame. Analysis
+  can stall; visuals never freeze.
+- Presets are authored **"per frame at 60 Hz"**. `WarpParams::to_uniforms`
+  rescales by `k = dt·60`: multiplicative terms (`decay`, `zoom`, `sx`,
+  `sy`) are raised to `k`, additive ones (`rotation`, `dx`, `dy`, wobble,
+  `sharpen`) multiplied by `k`, `blur` becomes `1 − (1 − b)^k`, `hue_shift`
+  is per second. The composite mask carries `k` too, so per-frame additive
+  energy scales with frame time. Result: the same trails and brightness at
+  60 and 144 Hz (unit-tested).
 
-Any change to field order, type, padding, or array size **must** be mirrored in the prelude. `_pad: [f32; 2]` exists because WGSL aligns arrays to 16 bytes; without it, `spectrum` would start at offset 24 on the CPU but offset 32 on the GPU.
+## Render pass graph
 
----
-
-## Render pipeline
-
-File: `src/render/renderer.rs::render`
-
-Each frame runs three passes, all writing to two ping-pong feedback textures held by `render/feedback.rs`:
-
-- `FEEDBACK_WIDTH × FEEDBACK_HEIGHT = 1280 × 720`, `Rgba16Float`. The 16-bit float format lets additive composites go well above 1.0 before clamping — essential for HDR-style bloom.
-- `FeedbackTextures::new` explicitly clears both textures via a one-off render pass; wgpu does not guarantee zero-init for render targets and first-frame sampling would otherwise read garbage.
-- `read_index()` / `write_index()` are XOR pairs. Every frame writes to whichever isn't being read. After submission, `swap()` XORs the index so next frame's warp pass samples what this frame just wrote.
-
-### Pass 1 — Warp
-
-Files: `src/render/warp.rs` + `shaders/warp.wgsl` + `src/render/mesh.rs`
-
-The feedback-trail effect. A 48×36 grid mesh has fixed clip-space positions spanning `[-1,1]` but **per-frame dynamic UVs**. Each frame, CPU code in `WarpMesh::update` walks every vertex and computes where to sample the previous feedback texture:
-
-1. Start from identity grid UV `(u0, v0)`. Flip V to match top-left-origin texture space vs. bottom-left-origin clip space.
-2. Center-relative: `(cx, cy) = uv - 0.5`.
-3. **Zoom** — divide by `zoom`. Values >1 zoom in: each output pixel reads from closer to center in the source, so the image appears to grow outward on the trail.
-4. **Rotation** — multiply by the 2D rotation matrix built from `sin_cos(rotation)`.
-5. **Warp** — add a low-frequency sinusoidal offset `warp_amount * sin/cos(pos * 3 + time * 0.5/0.7)`. The offset is derived from the vertex's *position*, so it's a fixed spatial pattern that slowly phase-shifts in time — swirling ripples, not uniform translation.
-6. Re-center: `uv = rotated + 0.5 + warp_offset`.
-
-The whole vertex array is then uploaded via `queue.write_buffer`. The fragment shader is trivial: `textureSample(prev, samp, uv) * decay`. Linear sampling on the 16-bit float texture handles inter-pixel blending; clamp-to-edge addressing prevents wrap-around smearing at screen borders. The `decay` uniform (clamped `[0.5, 0.9999]` by the library) determines how fast trails fade.
-
-### Pass 2 — Composite
-
-Files: `src/preset/shader.rs` + every preset's `.wgsl`
-
-The **preset's own fragment shader**, drawn as a fullscreen triangle additively on top of the warped feedback:
+Two ping-pong `Rgba16Float` feedback textures (`render/feedback.rs`)
+follow the window size × `render_scale`, capped at 4096. On resize the
+current image is resampled into the new pair so nothing flashes.
 
 ```
-blend = BlendState {
-    color: { src_factor: Constant, dst_factor: One, op: Add },
-    alpha: OVER,
-}
+ read feedback ─▶ 1 WARP ─▶ write feedback ─▶ 1b PARTICLES ─▶ 2 COMPOSITE ─▶ 3 BLOOM ─▶ 3 POST ─▶ swapchain ─▶ 4 HUD
+                  (masked,                     (additive,       (masked,        (mip       (tonemap,
+                  per preset)                  if any)          per preset)     chain)     grade)
 ```
 
-With `src_factor = Constant, dst_factor = One`, the per-draw **blend constant** acts as a scalar multiplier on the preset's output before it's added to what's already in the target. The renderer sets it via `rpass.set_blend_constant` per draw:
+1. **Warp** (`render/warp.rs`, `shaders/warp_prelude.wgsl` +
+   `warp_default.wgsl` or a preset's own `fs_warp`): a fullscreen per-pixel
+   resample of last frame. The built-in transform zooms/stretches/rotates
+   about `(cx, cy)` **in aspect-corrected space** (so rotation never
+   shears), translates, adds the MilkDrop sine wobble, then optional
+   blur/sharpen and hue rotation, × `decay`. Edge policy: mirror
+   (default, so zoom-out never smears border streaks), fade, or clamp. Each
+   active preset gets its own draw with its own uniforms and pipeline.
+2. **Particles** (`render/particles.rs`, `shaders/particles_*.wgsl`): when
+   any active preset has `[particles]`, a compute pass updates up to
+   131 072 particles (respawn dead ones in a spawn shape; curl-noise flow,
+   bass push, gravity, drag, beat bursts), then instanced soft sprites are
+   added into the feedback, where the next warp turns them into trails.
+   One population persists across presets; parameters crossfade.
+3. **Composite** (`preset/shader.rs`): the preset's `fs_composite`, drawn
+   additively on top (one draw per active preset).
+4. **Bloom** (`render/post.rs`, `shaders/bloom.wgsl`): COD:AW-style chain
+   over up to 6 mips at half resolution. A 13-tap downsample with Karis
+   averaging and a soft-knee threshold at mip 0, then 13-tap downsamples,
+   then 9-tap tent upsamples blended additively back up.
+5. **Post** (`shaders/post.wgsl`): display-time mirror/kaleidoscope fold
+   and MilkDrop video echo (neither feeds back), optional LED-panel
+   resample or radial chromatic aberration, exposure, contrast and
+   saturation in linear light, **Khronos PBR Neutral** tonemap (identity
+   below ~0.76, so authored colors survive), then vignette, luma-weighted
+   film grain and ±1 LSB triangular dither **in the encoded domain** (in
+   linear light the sRGB curve would amplify them ~13× near black). The
+   result is linearized for the sRGB swapchain.
+6. **HUD** — see [HUD](#hud).
 
-- **Stable state** — one draw at intensity 1.0.
-- **Transitioning state** — two draws: old preset at `1.0 - progress`, new preset at `progress`. True additive crossfade with no intermediate render target needed.
+Then `feedback.swap()`.
 
-The composite target is the *same* feedback texture the warp pass just wrote, with `LoadOp::Load` — the preset draws directly on top of the warped trail. That's why the visual has layered depth: each frame's new content is permanently recorded into the trail history.
+## Transitions and masks
 
-### Pass 3 — Blit
+A transition is `PresetState::Transitioning { from, to, progress, style,
+seed }` (`preset/transition.rs`). Progress is linear and eased with
+smootherstep at use. Retargeting mid-transition never pops the dominant
+layer: returning to `from` reverses in place; otherwise whichever preset
+carries more weight keeps its exact weight and the minor layer is swapped
+for the new target (the symmetric easing makes this exact; tested).
 
-Files: `src/render/blit.rs` + `shaders/blit.wgsl`
+Styles (crossfade, dissolve, radial, clock, zoom) are **per-pixel** without
+any preset knowing about them (`render/mask.rs`, `shaders/mask.wgsl`):
 
-Copies the feedback texture to the swapchain with aspect-correct letterboxing. Math in UV space:
+- The feedback texture's alpha channel is otherwise unused. Before each
+  preset's warp and composite draw, an alpha-only fullscreen pass writes
+  that preset's weight at every pixel.
+- Warp and composite pipelines blend `dst.rgb += src.rgb × dst.alpha` with a
+  color-only write mask, so the weight sticks until the next mask pass.
+- Stable frames use the same path with a uniform weight (and the composite
+  mask carries the frame-time factor `k`).
+- Zoom style additionally scales the outgoing preset's zoom up as it fades.
 
-```
-if (win_aspect > SOURCE_ASPECT) { p.x *= win_aspect / SOURCE_ASPECT; } // pillarbox
-else                            { p.y *= SOURCE_ASPECT / win_aspect; } // letterbox
-```
-
-`SOURCE_ASPECT` is hardcoded to `16/9` matching the feedback texture. Out-of-range UVs return black bars. The blit pass clears to black so the bars are clean even on resize.
-
----
+Because warps are weighted too, a transition blends the two presets'
+feedback *dynamics*, not just their overlays: inside a dissolve, each
+region keeps evolving under its own preset's motion.
 
 ## Preset system
 
-Files: `src/preset/`
+`preset/preset.rs` parses TOML into a `PresetSpec`: expressions parsed once
+into `Expr` trees (`preset/expr.rs`, recursive descent, WGSL-named
+functions), optional mapping fields defaulted, `[post]` numbers or
+expressions, `[particles]`, palette, edge mode, shader paths relative to
+the TOML. Unknown keys are rejected everywhere.
 
-### What a preset is
+`preset/library.rs` builds each spec into a `Preset` (composite pipeline,
+optional custom warp pipeline, palette uniform) and produces a per-frame
+`FramePlan`: per-preset warp steps, composite draws, folded post params,
+particle plan, and the transition mask.
 
-A preset is a pair of files in `presets/`:
+Shader compilation (`preset/shader.rs::compile_wgsl`) prepends
+`common.wgsl` + the relevant prelude and wraps **both** shader-module and
+render-pipeline creation in wgpu validation error scopes, so any authoring
+mistake (syntax, bad entry point, wrong return type) is an `Err`, never a
+device panic. naga's `wgsl:LINE:COL` locations and gutter numbers are
+remapped from the combined source back to the author's file.
 
-- `name.toml` — metadata, four expressions for the warp/decay parameters, an optional 4-color palette.
-- `name.wgsl` — **only** the fragment function `fs_composite(in: Varying) -> @location(0) vec4<f32>`.
+Bind group layouts are shared: `audio` (storage, all stages) and `palette`
+(uniform, all stages) are created once in `Renderer::new` and reused by the
+composite (`[audio, palette]`), warp (`[prev+sampler, warp uniforms,
+audio, palette]`) and particle pipelines.
 
-The WGSL file never declares bindings or helpers. `shaders/composite_prelude.wgsl` is concatenated in front of every preset's source before compilation and provides:
+## Hot reload
 
-- `AudioFeatures` struct + `@group(0) @binding(0) var<storage,read> u: AudioFeatures`
-- `Palette` struct + `@group(1) @binding(0) var<uniform> palette: Palette`
-- `Varying { pos, uv }` and `@vertex fn vs_fullscreen` that generates a fullscreen triangle
-- `TAU`, `PI` constants
-- Helpers `waveform_at(theta)` and `spectrum_at(t)` that index the audio arrays with proper clamping
+`preset/watcher.rs` (notify, recursive) forwards create/modify/remove events
+for `.toml`/`.wgsl`. `PresetLibrary::poll_reloads` debounces per path
+(120 ms), then decides by what exists on disk:
 
-### Load pipeline
+- TOML exists → rebuild that preset, or append it if new.
+- TOML gone → remove the preset if it isn't on screen (indices in the state
+  machine shift; tested).
+- WGSL changed → rebuild every preset using it; if none does, scan for
+  unloaded TOMLs (a preset whose shader arrived after its TOML).
+- Any failure keeps the last good version running and is surfaced in the
+  HUD's error panel until the next success.
 
-`PresetLibrary::load(device, dir, layouts)`:
+`seoul.toml` has its own watcher (`config.rs::ConfigWatch`).
 
-1. `scan_directory` reads every `*.toml` in `dir`. `PresetSpec::load` deserializes the TOML, then parses each of the four mapping strings with `preset/expr.rs::parse` into an `Expr` AST. Bad expressions fail loading *that* preset but don't abort the library — other presets still load and a warning logs.
-2. For each `PresetSpec`, `Preset::build` reads the composite WGSL, calls `compile_composite_shader` (which wraps shader module creation in `device.push_error_scope(Validation)` + `pop_error_scope` so a syntax error returns `Err` instead of panicking the device), then builds a `RenderPipeline` and a palette uniform buffer + bind group.
-3. If at least one preset survives, the library is constructed. Starting preset is the one named `default` if present, otherwise first alphabetically.
-4. `watcher::spawn(dir)` starts a `notify::RecommendedWatcher` whose callback filters to `.toml`/`.wgsl` modify/create events and forwards paths via `mpsc::channel`. The watcher is kept alive in a field; dropping it would stop file events.
+## Curation, auto-advance, config
 
----
+- `preset/curation.rs`: favorites and hidden sets persisted by name to
+  `seoul-state.toml`; a shuffle bag that plays every visible preset once
+  per cycle (favorites twice) and never repeats the current one.
+- Auto-advance (`PresetLibrary::tick`): after `min_interval`, change on a
+  beat, and only on a 4-beat boundary when tempo confidence ≥ 0.4; always
+  change at `max_interval` (so silence still advances). Lock (L) pauses it.
+- `config.rs`: `seoul.toml` sections `[auto]`, `[transition]`, `[post]`
+  (global look defaults), `[hud]`, plus start preset, fullscreen/monitor,
+  render scale. CLI flags override.
 
-## Mapping mini-language
+## HUD
 
-File: `src/preset/expr.rs`
+`render/hud.rs` draws after tonemapping, so it never blooms. Text is
+glyphon/cosmic-text over fonts loaded straight from `C:\Windows\Fonts`
+(Bahnschrift, Malgun Gothic for Hangul, Consolas), with a full system scan
+as a fallback. Text buffers re-shape only when their content changes;
+panels and meters are instanced SDF rounded rects (`shaders/hud.wgsl`)
+with premultiplied blending. Elements: startup 서울 wordmark, preset toasts
+(palette-colored accent, drop shadow), key notices, help (H), stats (F1:
+FPS, tempo, beat phase, band meters with ~1 s average ticks, spectrum
+strip, audio device), and the preset error panel. `P` screenshots include
+the HUD (the post and HUD passes are re-run offscreen for the last frame).
 
-Four fields under `[mapping]` — `zoom`, `rotation`, `warp_amount`, `decay` — are strings in a tiny expression language parsed via recursive descent:
+## Verification tooling
 
-```
-expr    = term (('+' | '-') term)*
-term    = factor (('*' | '/') factor)*
-factor  = '-'? primary
-primary = number | ident | ident '(' args ')' | '(' expr ')'
-```
+- `--synth`: deterministic 124 BPM test track (kick, clap, hats, ducked
+  bass, pad, arpeggio, kick-less breakdown every eighth bar).
+- `--tour SECS [--tour-shots N] [--preset filter]`: hard-cut through
+  presets, screenshot each into `screenshots/tour/`, exit. The HUD is
+  disabled for clean frames.
+- `--screenshot-at SECS`, `P`: PNG of the current frame.
 
-**Variables**: `bass mid treble bass_att mid_att treble_att volume beat time dt frame bpm beat_phase beat_count aspect`. The `*_att` variants are ~1 s attenuated averages of their bands (MilkDrop semantics).
+## Invariants checklist
 
-**Functions**: `sin cos abs sqrt` (arity 1), `pow min max` (arity 2), `clamp mix` (arity 3).
-
-Parsed once at load time into an `Expr` tree. Evaluated every frame via `Expr::eval(&EvalContext { features })` — a plain AST walk, no codegen, but trivially cheap at 4 expressions × 60 Hz.
-
-Example from `presets/default.toml`:
-```
-zoom        = "1.0 + bass * 0.05"
-warp_amount = "0.010 + beat * 0.030"
-decay       = "0.960 + treble * 0.015"
-```
-
----
-
-## Hot-reload flow
-
-Files: `src/preset/watcher.rs` + `library.rs::poll_reloads`
-
-Called from the renderer at the top of every frame, so reloads apply before that frame's evaluation:
-
-1. Drain all pending `ReloadEvent`s from the channel into a `HashSet<PathBuf>` — editors often fire 2–3 events per save (write + modify + metadata), the set dedupes.
-2. For each unique changed path:
-   - **`.toml`** — find the preset whose `source_path` has the same filename. `PresetSpec::load` it, build a new `Preset` via the existing layouts, and replace the slot. This rebuilds shader, pipeline, palette buffer, and re-parses all expressions.
-   - **`.wgsl`** — find *every* preset whose `composite_path` points to that filename (multiple presets can share a shader), recompile the shader module, rebuild just the pipeline. Existing `PresetSpec` and palette are preserved.
-3. If compilation fails, the old preset is kept and a warning logs. Visuals never break from bad edits — you just keep the last good version until you fix it.
-
----
-
-## Preset state machine & auto-advance
-
-File: `src/preset/transition.rs`
-
-```rust
-enum PresetState {
-    Stable { current: usize },
-    Transitioning { from: usize, to: usize, progress: f32 },
-}
-```
-
-- `begin_transition(target)` — if already transitioning, the current `to` becomes the new `from` and `progress` resets to 0. Rapid key mashing chains cleanly rather than getting stuck mid-interpolation.
-- `tick(dt)` — advances `progress` by `dt / TRANSITION_DURATION (2.0)`. When `progress ≥ 1.0`, state collapses to `Stable { current: to }`.
-- `frame_plan(features)` consumes this state to produce the 1- or 2-draw plan for pass 2, and LERPs all four warp/decay expression values when transitioning.
-
-**Auto-advance** — togglable via `A`. While on and in `Stable`, every frame checks:
-
-- `features.time - last_advance_time > AUTO_ADVANCE_INTERVAL (25 s)` **and**
-- `features.beat > AUTO_ADVANCE_BEAT_THRESHOLD (0.7)`.
-
-The beat gate makes transitions land on music rather than silence between tracks.
-
----
-
-## Lifetime / ownership notes
-
-- `RenderContext::window` is kept as `Arc<Window>` solely to anchor the `'static` lifetime of `wgpu::Surface`. Surfaces hold a raw window handle; dropping the `Arc` too early would invalidate the surface.
-- Several fields carry `#[allow(dead_code)]` because they're load-bearing for lifetimes: GPU textures backing views, the `notify::RecommendedWatcher`, palette buffers backing bind groups. Don't remove them.
-- `WarpUniforms` in `warp.rs` uses `[f32; 3]` padding (not `vec3`) to match the 16-byte Rust struct — see the comment in `shaders/warp.wgsl`. WGSL would otherwise align `vec3<f32>` to 16 bytes and balloon the struct to 32 bytes.
+- `AudioFeatures` (Rust) ⇔ `shaders/common.wgsl` field for field.
+- `WarpUniforms` (80 B), `PostUniforms` (80 B), `ParticleUniforms` (96 B),
+  mask uniforms (32 B): Rust structs ⇔ WGSL structs, guarded by size asserts.
+- Everything drawn into the feedback that should respect transitions
+  (warp, composite) uses `MASKED_BLEND` + `ColorWrites::COLOR`; nothing
+  else may write feedback alpha except the mask pass.
+- Per-frame quantities authored at 60 Hz must go through `k = dt·60`.
+- Anything new compiled from user files goes inside an error scope.
