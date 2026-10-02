@@ -1,9 +1,9 @@
-//! WASAPI loopback capture with automatic reconnection.
+//! System-audio loopback capture with automatic reconnection.
 //!
 //! [`LoopbackCapture`] lives on the main thread (cpal streams are `!Send`)
 //! and is polled once per frame. It (re)opens a loopback stream on the
 //! current default output device whenever there is none, the stream reports
-//! an error, or Windows' default output changes — e.g. plugging in
+//! an error, or the default output changes — e.g. plugging in
 //! headphones — and hands each new sample ring to the analysis thread.
 
 use std::sync::Arc;
@@ -24,7 +24,7 @@ pub const RING_CAPACITY: usize = 16_384;
 
 const RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(2);
-/// Give Windows a moment to settle after a device change before reopening.
+/// Give the OS a moment to settle after a device change before reopening.
 const RECONNECT_DELAY: Duration = Duration::from_millis(250);
 
 type ProdHeap = ringbuf::HeapProd<f32>;
@@ -50,13 +50,8 @@ impl LoopbackCapture {
     /// with no usable device the visualizer simply runs on silence and keeps
     /// retrying in the background.
     pub fn new(sink: Sender<AudioSource>) -> Self {
-        let host = match cpal::host_from_id(cpal::HostId::Wasapi) {
-            Ok(h) => Some(h),
-            Err(e) => {
-                warn!("WASAPI host unavailable, running without audio: {e}");
-                None
-            }
-        };
+        // WASAPI on Windows, CoreAudio on macOS.
+        let host = Some(cpal::default_host());
         let now = Instant::now();
         let mut capture = Self {
             host,
@@ -127,9 +122,10 @@ fn open_loopback(host: &cpal::Host) -> Result<(Active, AudioSource)> {
     let device = host
         .default_output_device()
         .ok_or_else(|| anyhow!("no default output device for loopback"))?;
-    // For WASAPI loopback, use the device's *output* config and pass it to
-    // build_input_stream. cpal's WASAPI backend sees an input stream on a
-    // render device and enables AUDCLNT_STREAMFLAGS_LOOPBACK.
+    // Loopback = the device's *output* config passed to build_input_stream.
+    // cpal's WASAPI backend sees an input stream on a render device and sets
+    // AUDCLNT_STREAMFLAGS_LOOPBACK; its CoreAudio backend (macOS 14.6+) sees
+    // a device with no inputs and records it through a process tap.
     let config = device
         .default_output_config()
         .context("default_output_config failed on default output device")?;
@@ -144,7 +140,7 @@ fn open_loopback(host: &cpal::Host) -> Result<(Active, AudioSource)> {
         sample_rate,
         channels,
         ?sample_format,
-        "WASAPI loopback capture starting"
+        "loopback capture starting"
     );
 
     let rb = HeapRb::<f32>::new(RING_CAPACITY);

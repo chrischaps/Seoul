@@ -9,7 +9,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize, Size};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 mod audio;
@@ -145,6 +145,7 @@ struct App {
     tour: Option<Tour>,
     title: String,
     exit_requested: bool,
+    modifiers: ModifiersState,
 }
 
 impl App {
@@ -294,6 +295,12 @@ impl App {
         match kc {
             KeyCode::Escape => return event_loop.exit(),
             KeyCode::F11 => return self.toggle_fullscreen_on(self.config.monitor, event_loop),
+            // The Mac convention, since F11 is usually a media key there.
+            KeyCode::KeyF
+                if cfg!(target_os = "macos") && self.modifiers.super_key() && self.modifiers.control_key() =>
+            {
+                return self.toggle_fullscreen_on(self.config.monitor, event_loop);
+            }
             KeyCode::KeyP => {
                 self.screenshot_requested = true;
                 return;
@@ -469,6 +476,7 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(r) = self.renderer.as_mut() {
                     r.hud_mut().set_scale(scale_factor);
@@ -517,16 +525,49 @@ fn release_own_console() {
 }
 
 /// Presets, settings, favorites and screenshots are relative paths. Launched
-/// from elsewhere (a shortcut, a file manager), work from the exe's folder.
+/// from elsewhere (a shortcut, a file manager, Finder), work from the exe's
+/// folder, or on macOS from the app's support folder.
 fn settle_working_dir() {
     if Path::new("presets").is_dir() {
         return;
     }
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
-    if let Some(dir) = exe_dir.filter(|d| d.join("presets").is_dir()) {
-        info!(dir = %dir.display(), "working from the exe's folder");
-        let _ = std::env::set_current_dir(dir);
+    let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    let exe_dir = mac_support_dir(&exe_dir).unwrap_or(exe_dir);
+    if exe_dir.join("presets").is_dir() {
+        info!(dir = %exe_dir.display(), "working from the app's folder");
+        let _ = std::env::set_current_dir(exe_dir);
     }
+}
+
+/// Inside Seoul.app the presets ship in Contents/Resources, which is
+/// read-only in spirit (writing there breaks the signature) and sometimes in
+/// fact (a downloaded app can run from a randomized read-only copy). Work
+/// from ~/Library/Application Support/Seoul instead, seeded from the bundle.
+/// Files already there are left alone, so edits survive updates and new
+/// presets still arrive.
+#[cfg(target_os = "macos")]
+fn mac_support_dir(exe_dir: &Path) -> Option<PathBuf> {
+    let resources = exe_dir.parent()?.join("Resources");
+    if !resources.join("presets").is_dir() {
+        return None;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/Seoul");
+    std::fs::create_dir_all(home.join("presets")).ok()?;
+    let copy_missing = |from: &Path, to: &Path| {
+        if !to.exists()
+            && let Err(e) = std::fs::copy(from, to)
+        {
+            warn!("couldn't copy {} into {}: {e}", from.display(), to.display());
+        }
+    };
+    for entry in std::fs::read_dir(resources.join("presets")).ok()?.flatten() {
+        copy_missing(&entry.path(), &home.join("presets").join(entry.file_name()));
+    }
+    copy_missing(&resources.join("seoul.toml"), &home.join("seoul.toml"));
+    Some(home)
 }
 
 fn main() -> Result<()> {
@@ -593,6 +634,7 @@ fn main() -> Result<()> {
         tour: None,
         title: String::new(),
         exit_requested: false,
+        modifiers: ModifiersState::empty(),
     };
 
     event_loop.run_app(&mut app)?;

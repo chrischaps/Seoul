@@ -8,14 +8,21 @@ tempo and spectrum, and feeds that to shader visuals. Each frame is drawn
 over a warped, fading copy of the frame before it, so the image builds trails
 and keeps moving.
 
-**[Download for Windows](https://github.com/chrischaps/Seoul/releases/latest)** ·
-[Project page](https://chaps.dev/projects/seoul)
+**[Download](https://github.com/chrischaps/Seoul/releases/latest)** for
+Windows or macOS (untested) · [Project page](https://chaps.dev/projects/seoul)
 
 ## Running it
 
-Unzip the release, play some music, and run `seoul.exe`. Keep the `presets`
-folder beside the exe. The exe isn't code-signed, so Windows SmartScreen may
-warn the first time: choose **More info → Run anyway**.
+**Windows 10/11:** unzip the release, play some music, and run `seoul.exe`.
+Keep the `presets` folder beside the exe. The exe isn't code-signed, so
+Windows SmartScreen may warn the first time: choose **More info → Run anyway**.
+
+**macOS 14.6+ (untested):** the Mac build is produced by CI, but nobody has
+run it on a real Mac yet, so reports are very welcome. It's ad-hoc signed,
+not notarized, so the first launch needs **System Settings → Privacy &
+Security → Open Anyway**. Then allow system audio recording when asked. Seoul
+keeps its presets, settings and screenshots in
+`~/Library/Application Support/Seoul`. Fullscreen is ⌃⌘F, and Cmd-Q quits.
 
 | Key | |
 |---|---|
@@ -35,10 +42,13 @@ else is playing. `--help` lists all the options. Settings live in
 cargo run --release               # debug builds are too slow for 60 fps
 cargo test
 .\packaging\package.ps1           # → dist\seoul-<version>-windows-x64.zip
+./packaging/package-macos.sh      # on a Mac → dist/seoul-<version>-macos-universal.zip
 ```
 
-Seoul is Windows-only. It captures audio through WASAPI loopback and loads
-its HUD fonts from `C:\Windows\Fonts`.
+System audio comes in through cpal's loopback capture. That's WASAPI on
+Windows and a CoreAudio process tap on macOS 14.6+. The HUD uses fonts the OS
+already ships. Every push to `main` builds and tests both platforms in GitHub
+Actions, and pushing a `v*` tag drafts a release with both zips.
 
 ## Presets
 

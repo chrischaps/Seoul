@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Seoul.app's Info.plist; package-macos.sh fills in __VERSION__. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Seoul</string>
+    <key>CFBundleDisplayName</key>
+    <string>Seoul</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.chaps.seoul</string>
+    <key>CFBundleExecutable</key>
+    <string>seoul</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+    <!-- System-audio capture uses CoreAudio process taps (cpal: macOS 14.6+). -->
+    <key>LSMinimumSystemVersion</key>
+    <string>14.6</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Without these strings macOS never shows the permission prompt. -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Seoul listens to what your Mac is playing and turns it into light. The audio never leaves your computer.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Seoul listens to what your Mac is playing and turns it into light. The audio never leaves your computer.</string>
+</dict>
+</plist>

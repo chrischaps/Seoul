@@ -2,11 +2,10 @@
 //! never blooms): startup wordmark, preset toasts, key-toggle notices, help
 //! (H), stats (F1) and preset error reports.
 //!
-//! Text is glyphon over fonts every Windows install ships — Bahnschrift
-//! for UI, Malgun Gothic for Hangul, Consolas for numbers — so nothing is
-//! bundled. Panels and meters are instanced SDF rounded rects.
-
-use std::path::PathBuf;
+//! Text is glyphon over fonts the OS already ships, so nothing is bundled:
+//! on Windows Bahnschrift for UI, Malgun Gothic for Hangul and Consolas for
+//! numbers; on macOS Avenir Next, Apple SD Gothic Neo and Menlo. Panels and
+//! meters are instanced SDF rounded rects.
 
 use bytemuck::{Pod, Zeroable};
 use glyphon::cosmic_text::Align;
@@ -21,9 +20,38 @@ use crate::audio::AudioFeatures;
 use crate::preset::preset::PresetSpec;
 use crate::render::gpu;
 
-const SANS: &str = "Bahnschrift";
-const HANGUL: &str = "Malgun Gothic";
-const MONO: &str = "Consolas";
+#[cfg(not(target_os = "macos"))]
+mod os {
+    use std::path::PathBuf;
+
+    pub const SANS: &str = "Bahnschrift";
+    pub const HANGUL: &str = "Malgun Gothic";
+    pub const MONO: &str = "Consolas";
+    pub const FONT_FILES: &[&str] = &["bahnschrift.ttf", "malgun.ttf", "consola.ttf", "segoeui.ttf", "seguisym.ttf"];
+    pub const FULLSCREEN_KEY: &str = "F11";
+
+    pub fn font_dir() -> PathBuf {
+        PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into())).join("Fonts")
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod os {
+    use std::path::PathBuf;
+
+    pub const SANS: &str = "Avenir Next";
+    pub const HANGUL: &str = "Apple SD Gothic Neo";
+    pub const MONO: &str = "Menlo";
+    pub const FONT_FILES: &[&str] =
+        &["Avenir Next.ttc", "AppleSDGothicNeo.ttc", "Menlo.ttc", "HelveticaNeue.ttc", "Apple Symbols.ttf"];
+    pub const FULLSCREEN_KEY: &str = "⌃⌘F";
+
+    pub fn font_dir() -> PathBuf {
+        PathBuf::from("/System/Library/Fonts")
+    }
+}
+
+use os::{HANGUL, MONO, SANS};
 const MAX_RECTS: usize = 256;
 
 const WORDMARK_FADE_IN: f32 = 0.8;
@@ -586,13 +614,13 @@ impl Hud {
 
     fn layout_help(&mut self, areas: &mut Vec<(LabelId, f32, f32, f32)>) {
         let u = self.u();
-        const KEYS: &str = "Space\nBackspace\nR\nA\nL\nF\n1 – 9\nX\nP\nF1\nH\nF11\nEsc";
+        let keys = format!("Space\nBackspace\nR\nA\nL\nF\n1 – 9\nX\nP\nF1\nH\n{}\nEsc", os::FULLSCREEN_KEY);
         const DESC: &str = "Next preset\nPrevious preset\nShuffle\nAuto-advance\nLock this preset\nFavorite\nJump to a favorite\nHide this preset\nScreenshot\nStats\nThis help\nFullscreen\nQuit";
         let fs = &mut self.font_system;
         self.labels.help_title
             .set(fs, "서울  ·  KEYS", SANS, 13.0 * u, 18.0 * u, Weight::NORMAL, 0.3, 400.0 * u, None);
         self.labels.help_keys
-            .set(fs, KEYS, MONO, 15.0 * u, 25.0 * u, Weight::NORMAL, 0.0, 140.0 * u, None);
+            .set(fs, &keys, MONO, 15.0 * u, 25.0 * u, Weight::NORMAL, 0.0, 140.0 * u, None);
         self.labels.help_desc
             .set(fs, DESC, SANS, 15.0 * u, 25.0 * u, Weight::NORMAL, 0.02, 260.0 * u, None);
         let (_, kh) = self.labels.help_keys.extent();
@@ -710,12 +738,11 @@ fn srgb(c: [f32; 3], alpha: f32) -> [f32; 4] {
     [lin(c[0]), lin(c[1]), lin(c[2]), alpha]
 }
 
-/// Load just the handful of Windows fonts the HUD uses (fast), or fall back
+/// Load just the handful of system fonts the HUD uses (fast), or fall back
 /// to a full system scan if they're missing.
 fn load_fonts() -> FontSystem {
-    let dir = PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into())).join("Fonts");
-    let files = ["bahnschrift.ttf", "malgun.ttf", "consola.ttf", "segoeui.ttf", "seguisym.ttf"];
-    let sources: Vec<fontdb::Source> = files
+    let dir = os::font_dir();
+    let sources: Vec<fontdb::Source> = os::FONT_FILES
         .iter()
         .map(|f| dir.join(f))
         .filter(|p| p.exists())

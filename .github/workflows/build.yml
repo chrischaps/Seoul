@@ -1,0 +1,67 @@
+# Tests and packages Seoul for Windows and macOS on every push to main.
+# Pushing a v* tag also gathers both zips into a draft GitHub release.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release --target-dir target/package
+      - run: ./packaging/package.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: ./packaging/package-macos.sh
+      # A smoke test of the bundle without a GPU: the binary runs, and the
+      # signature and plist hold together.
+      - run: |
+          app=$(ls -d dist/*/Seoul.app)
+          "$app/Contents/MacOS/seoul" --help
+          codesign --verify --deep --strict "$app"
+          plutil -lint "$app/Contents/Info.plist"
+          lipo -archs "$app/Contents/MacOS/seoul"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft the release (notes are written by hand before publishing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" \
+            --draft --title "Seoul ${TAG#v}" --notes "Draft: notes to follow."

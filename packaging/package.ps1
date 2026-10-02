@@ -20,7 +20,7 @@ try {
     Copy-Item target/package/release/seoul.exe $stage
     Copy-Item -Recurse presets $stage
     Copy-Item seoul.toml $stage
-    Copy-Item packaging/README.txt $stage
+    Copy-Item packaging/README-windows.txt (Join-Path $stage README.txt)
 
     $zip = "dist/$name.zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }

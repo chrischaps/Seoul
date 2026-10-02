@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback, extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Windows-only (WASAPI host, HUD fonts from `C:\Windows\Fonts`).
+`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback, extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `main.rs::mac_support_dir`).
 
 Deeper docs: `docs/ARCHITECTURE.md` (threads, analysis math, pass graph, transitions, invariants) and `docs/PRESETS.md` (authoring guide).
 
@@ -22,6 +22,11 @@ cargo run --release -- --synth --tour 10 --tour-shots 3 --size 1280x720   # → 
 cargo run --release -- --synth --tour 10 --preset ink                     # --preset filters a tour by name
 cargo run --release -- --synth --preset Vortex --screenshot-at 5
 cargo run --release -- --help
+
+# Platforms and releases
+cargo check --release --target aarch64-apple-darwin --target-dir target/macos   # Mac compile check from Windows
+.\packaging\package.ps1          # Windows zip → dist/
+git tag vX.Y.Z && git push --tags  # CI (.github/workflows/build.yml) drafts a release with both zips
 ```
 
 `--synth` is a deterministic 124 BPM test track (`src/audio/synth.rs`). Screenshots re-run the display passes offscreen and can be viewed with the Read tool. When a script launches the app, send its output to a file, not a pipe: a full pipe blocks the render thread on logging.
