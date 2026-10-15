@@ -4,18 +4,26 @@ description = "Kali's fold, |p|/|p|² − c, repeated until it blooms into nebul
 
 # The fold constant follows the mid/treble balance with a slow time
 # constant, so the nebula changes the way weather does instead of jumping
-# on every note. The view flies forward through layered depths, faster
-# with the bass, and turns slowly; beats sparkle the stars.
+# on every note. The view flies forward through layered depths and turns.
+#   kick   the flight surges forward through a depth layer and the gas
+#          flares from within
+#   snare  the nebula's colors swing around the palette for a moment
+#   hat    the stars twinkle
+#   groove (kicks flowing) without it the flight coasts and the gas cools
+#          and dims, so the drop launches you forward again
 [params]
-cx    = { follow = "0.62 + mid_att * 0.10 - treble_att * 0.05", tau = 1.5 }
-cy    = { follow = "0.52 + bass_att * 0.06", tau = 1.5 }
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "kick", tau = 0.1 }
+snap   = { follow = "snare", tau = 0.15 }
+cx     = { follow = "0.62 + mid_att * 0.10 - treble_att * 0.05", tau = 1.5 }
+cy     = { follow = "0.52 + bass_att * 0.06", tau = 1.5 }
 # Flight speed: one unit passes through one octave of depth (×5 zoom).
-fly   = { rate = "0.05 + bass_att * 0.10 + beat * 0.06" }
-turn  = { rate = "0.01" }
-depth = { follow = "1.25 - bass_att * 0.25", tau = 0.8 }
+fly    = { rate = "0.02 + groove * 0.06 + bass_att * 0.04 + kick * 0.9" }
+turn   = { rate = "0.005 + groove * 0.01" }
+depth  = { follow = "1.25 - bass_att * 0.15 - punch * 0.15", tau = 0.15 }
 
 [mapping]
-zoom        = "1.004 + bass_att * 0.004"
+zoom        = "1.002 + groove * 0.003 + punch * 0.01"
 rotation    = "0"
 warp_amount = "0"
 decay       = "0.86"

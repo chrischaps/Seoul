@@ -6,18 +6,27 @@ edge = "fade"
 # The pine is one branch, repeated: move to the tip, mirror, turn, shrink,
 # nine times over. `spread` opens the crown with the bass; `wind` (mid)
 # bends every level a little more than the one below, so the tips sway
-# most. The warp lifts and diffuses whatever is drawn, like ink in water,
-# and a slight zoom from the horizon streams it past as you walk.
+# most. The warp lifts and diffuses whatever is drawn, like ink in water.
+#   kick   a gust: the pines rock and their needles light up, you take a
+#          stride forward, and the moonlight breathes
+#   snare  a ring of light spreads out from the moon
+#   hat    the needle tips glitter
+#   groove (kicks flowing) without it the wind drops, the walk slows to a
+#          stroll, the forest dims to ink and clouds cross the moon; the
+#          drop clears them
 [params]
-spread = { follow = "0.36 + bass_att * 0.08", tau = 0.6 }
-wind   = { follow = "0.02 + mid * 0.06", tau = 0.5 }
-bend   = "0.04 + wind * sin(time * 1.1)"
-glow   = { follow = "volume", tau = 0.4 }
-# The walk: one unit passes one tree. Bass quickens the pace.
-walk   = { rate = "0.06 + bass_att * 0.08 + beat * 0.03" }
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+gust   = { follow = "kick", tau = 0.18 }
+snap   = { follow = "snare", tau = 0.15 }
+spread = { follow = "0.36 + bass_att * 0.06 + gust * 0.04", tau = 0.2 }
+wind   = { follow = "0.01 + groove * 0.02 + mid * 0.04", tau = 0.5 }
+bend   = "0.04 + wind * sin(time * 1.1) + gust * 0.10"
+glow   = { follow = "0.3 + groove * 0.7", tau = 0.4 }
+# The walk: one unit passes one tree. Kicks are strides.
+walk   = { rate = "0.02 + groove * 0.05 + bass_att * 0.04 + kick * 0.5" }
 
 [mapping]
-zoom        = "1.002 + bass_att * 0.002"
+zoom        = "1.001 + groove * 0.002 + gust * 0.006"
 cy          = "0.58"
 rotation    = "0.0"
 warp_amount = "0.0"
@@ -36,6 +45,7 @@ color3 = [0.98, 0.93, 0.80, 1.0]   # moon
 
 [post]
 bloom      = 0.45
+exposure   = "0.9 + groove * 0.15"
 vignette   = 0.5
 grain      = 0.3
 saturation = 0.95

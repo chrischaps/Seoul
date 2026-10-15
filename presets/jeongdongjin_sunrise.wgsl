@@ -4,8 +4,10 @@
 // moment it was born (spectrum_ago), so the song washes in from the sea.
 // The sun's elevation follows how much music has played (`params().sun`):
 // it climbs out of the water, crosses the sky and sets again. Hats glint
-// on the sun's path across the water, kicks flash foam on the nearest
-// crests, and the ship-shaped hotel keeps watch from the headland.
+// on the sun's path across the water, kicks make the nearest crests rear
+// up and break white, snares flare the sun, and when the kicks stop
+// (`groove` falls) the sea calms until the drop. The ship-shaped hotel
+// keeps watch from the headland.
 
 const HORIZON: f32 = 0.42;
 const WAVES: i32 = 26;
@@ -40,15 +42,19 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let t = u.time;
     // 0 before dawn → 1 high in the sky → 0 again at dusk.
     let e = 0.5 - 0.5 * cos(params().sun * TAU);
+    let groove = params().groove;
 
     let coral = palette.colors[1].rgb;
     let gold = palette.colors[2].rgb;
-    let sunc = mix(coral, mix(gold, vec3<f32>(1.0, 0.95, 0.85), 0.5), smoothstep(0.1, 0.6, e));
+    // A breakdown draws a veil of high cloud across the sun, dimming its
+    // light on sky and sea alike; the drop burns it off.
+    let veil = 0.45 + 0.55 * groove;
+    let sunc = mix(coral, mix(gold, vec3<f32>(1.0, 0.95, 0.85), 0.5), smoothstep(0.1, 0.6, e)) * veil;
     let sun_pos = vec2<f32>(-0.18 * u.aspect, HORIZON - 0.5 - 0.08 + e * 0.40);
     let sd = length(c - sun_pos);
 
     // Sky color at the horizon line (the sea reflects it too).
-    let horizon_col = mix(coral * 0.06, mix(coral, gold, 0.6) * 0.45, smoothstep(0.0, 0.5, e)) + sunc * 0.05 * e;
+    let horizon_col = mix(coral * 0.06, mix(coral, gold, 0.6) * 0.45, smoothstep(0.0, 0.5, e)) * (0.6 + 0.4 * veil) + sunc * 0.05 * e;
     var col: vec3<f32>;
 
     if (p.y >= HORIZON) {
@@ -61,6 +67,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let cl = smoothstep(0.55, 0.85, fbm(vec2<f32>(c.x * 1.1 + t * 0.006, p.y * 9.0)));
         col = col + cl * smoothstep(HORIZON + 0.05, HORIZON + 0.25, p.y) * (sunc * 0.12 * (0.2 + e) + palette.colors[0].rgb * 0.01);
         col = col + sunc * (fill(sd - 0.055) * (1.5 + 2.0 * e) + glow(sd - 0.055, 0.10) * 0.25 + glow(sd, 0.45) * 0.06) * smoothstep(0.0, 0.08, e + 0.04);
+        // Snares flare the sun: a burst of rays that fades in a moment.
+        let ra = atan2(c.y - sun_pos.y, c.x - sun_pos.x);
+        let rays = pow(abs(sin(ra * 9.0 + u.snare_count * 1.7)), 24.0) + 0.5 * pow(abs(sin(ra * 5.0 - u.snare_count)), 30.0);
+        let flare = exp(-u.snare_age * 5.0) * smoothstep(0.0, 0.08, e + 0.04);
+        col = col + sunc * (rays * glow(sd - 0.055, 0.35) * 0.5 + glow(sd - 0.055, 0.2) * 0.25) * flare;
 
         // The headland, and the ship-shaped hotel on top of it.
         let hx = (p.x - 0.78) / 0.22;
@@ -99,7 +110,9 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
             let s = spectrum_ago(tx, age);
             // A resting swell, so even quiet water rolls; the song lifts it.
             let swell = 0.22 + 0.12 * sin(p.x * (5.0 + 3.0 * rand2(vec2<f32>(f32(k), 1.0))) + f32(k) * 2.3);
-            let crest = base + amp * (swell + 0.7 * s * s);
+            // Kicks make the near waves rear up; the sea runs lower in a breakdown.
+            let rear = 1.0 + u.kick * 0.9 * wv * wv;
+            let crest = base + amp * (swell * (0.75 + 0.25 * groove) + 0.7 * s * s * (0.4 + 0.6 * groove)) * rear;
             if (crest >= p.y) {
                 crest_dist = crest - p.y;
                 crest_s = s;
@@ -115,13 +128,15 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         // Foam along the lip: loud moments break white; kicks flash the near ones.
         let lip = smoothstep(0.0025 * (0.4 + crest_v * 2.0), 0.0, crest_dist);
         let foam_col = mix(horizon_col * 2.0, vec3<f32>(0.9, 0.95, 1.0) * (0.05 + 0.25 * e), 0.5);
-        col = col + foam_col * lip * (0.15 + crest_s * 1.5) * (1.0 + u.kick * 2.0 * crest_v) * smoothstep(0.0, 0.08, crest_v);
+        let spray = smoothstep(0.012 * (0.4 + crest_v * 2.0), 0.0, crest_dist) * u.kick * crest_v * crest_v;
+        col = col + foam_col * lip * (0.1 + crest_s * 1.5) * (0.35 + 0.65 * groove) * (1.0 + u.kick * 4.0 * crest_v) * smoothstep(0.0, 0.08, crest_v)
+            + vec3<f32>(0.9, 0.95, 1.0) * spray * (0.08 + 0.2 * e);
 
         // The sun's glitter path, widening toward the shore; hats glint.
         let path = exp(-pow((c.x - sun_pos.x) / (0.03 + v * 0.35), 2.0));
         let cell = floor(vec2<f32>(c.x * 220.0, p.y * 140.0 / max(v, 0.05)));
         let spark = step(0.93 - u.hat * 0.05, rand2(cell + floor(t * 12.0) * 3.7));
-        col = col + sunc * spark * path * (0.08 + 0.25 * u.hat) * (0.15 + e);
+        col = col + sunc * spark * path * (0.04 + 0.08 * groove + 0.4 * u.hat) * (0.15 + e);
     }
 
     // Decay is 0.5, so feedback doubles a steady image: halve to land on `col`.

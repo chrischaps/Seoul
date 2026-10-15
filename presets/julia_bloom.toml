@@ -1,23 +1,31 @@
 name = "Julia Bloom"
 author = "seoul"
-description = "A Julia set riding the rim of the Mandelbrot heart; beats scatter it to dust."
+description = "A Julia set riding the rim of the Mandelbrot heart; every kick shatters it to dust and drops you a level deeper."
 
 # c walks the boundary of the Mandelbrot set's main cardioid, where the
-# Julia sets are most varied. Bass speeds the walk; beats push c just
-# outside, so the set breaks from lace into dust and knits back together.
+# Julia sets are most varied. Bass speeds the walk.
+#   kick   the dive lurches a level deeper, c is shoved outside the set (lace
+#          shatters into dust and knits back), and the rim flares
+#   snare  the colors jump around the palette and the orbit-trap filigree flashes
+#   hat    a fine shimmer in the filigree
+#   groove (kicks flowing) without it, in breakdowns, the fall slows to a
+#          drift and the set dims and cools
 [params]
-theta = { rate = "0.035 + bass_att * 0.05", wrap = 6.2831853 }
-push  = { follow = "0.985 + beat * 0.05 + bass * 0.02", tau = 0.22 }
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "kick", tau = 0.08 }
+snap   = { follow = "snare", tau = 0.1 }
+theta  = { rate = "0.02 + groove * 0.03 + bass_att * 0.03", wrap = 6.2831853 }
+push   = { follow = "0.985 + punch * 0.07 + bass * 0.01", tau = 0.12 }
 # Skip the cusp (θ near 0), where the dive's fixed point stops repelling.
-ang   = "0.5 + theta * 0.8408"
-cx    = "(cos(ang) * 0.5 - cos(2 * ang) * 0.25) * push"
-cy    = "(sin(ang) * 0.5 - sin(2 * ang) * 0.25) * push"
-spin  = { rate = "0.015 + mid_att * 0.03" }
-trap  = { follow = "treble", tau = 0.12 }
+ang    = "0.5 + theta * 0.8408"
+cx     = "(cos(ang) * 0.5 - cos(2 * ang) * 0.25) * push"
+cy     = "(sin(ang) * 0.5 - sin(2 * ang) * 0.25) * push"
+spin   = { rate = "0.01 + groove * 0.02 + mid_att * 0.02" }
+trap   = { follow = "treble * 0.5 + hat * 0.6", tau = 0.08 }
 # The dive: one unit falls exactly one level into the Julia set, spiraling
-# into its repelling fixed point. Bass speeds the fall.
-speed = { follow = "0.12 + bass_att * 0.30 + beat * 0.15", tau = 0.3 }
-dive  = { rate = "speed", wrap = 1.0 }
+# into its repelling fixed point. Kicks shove it a level deeper.
+speed  = { follow = "0.05 + groove * 0.12 + bass_att * 0.15 + kick * 2.2", tau = 0.12 }
+dive   = { rate = "speed", wrap = 1.0 }
 
 [mapping]
 zoom        = "1.005 + bass * 0.006"
@@ -37,6 +45,8 @@ color3 = [0.96, 0.92, 0.84, 1.0]   # bone
 
 [post]
 bloom      = 0.55
+# The whole picture settles a little in breakdowns.
+exposure   = "0.85 + groove * 0.2"
 saturation = 1.25
 vignette = 0.35
 grain    = 0.08

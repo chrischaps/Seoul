@@ -38,9 +38,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     if (j.z > 0.5) {
         // Outside: brightness climbs toward the boundary; hue cycles with depth.
         let glow = pow(clamp(n / 96.0 * 2.5, 0.0, 1.0), 2.2);
-        let hue = cosine_palette(n * 0.11 + u.time * 0.012, 0.35);
-        // A faint field of color far out, rising to the bright rim.
-        col = hue * (0.0025 + glow * 0.045);
+        let hue = cosine_palette(n * 0.11 + u.time * 0.012 + q.snap * 0.3, 0.35);
+        // A faint field of color far out, rising to the bright rim, which
+        // flares on the kick and dims when the kicks stop.
+        let energy = 0.2 + 0.8 * q.groove * q.groove + q.punch * 1.4;
+        col = hue * (0.0025 * (0.4 + 0.6 * q.groove) + glow * 0.045 * energy);
     } else {
         // Inside: deep indigo, with rose contour rings where orbits sink toward 0.
         let rings = pow(0.5 + 0.5 * cos(j.w * 40.0), 6.0) * smoothstep(0.8, 0.1, j.w);
@@ -48,7 +50,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     }
 
     // Orbit-trap filigree, brightened by treble and beats.
-    let trap = exp(-j.y * 60.0) * (0.002 + q.trap * 0.02 + u.beat * 0.012);
+    let trap = exp(-j.y * 60.0) * (0.002 + q.trap * 0.02 + q.snap * 0.05);
     col = col + mix(palette.colors[1].rgb, palette.colors[3].rgb, 0.5) * trap;
 
     return vec4<f32>(col, 1.0);

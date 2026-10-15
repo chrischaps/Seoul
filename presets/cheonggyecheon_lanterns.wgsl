@@ -4,8 +4,10 @@
 // is one spectrum bin, so the whole stream is a scattered EQ. More are set
 // afloat as the song goes on. The current (`params().flow`) carries them and
 // the custom warp (cheonggyecheon_lanterns_warp.wgsl) drags their light
-// through the water at the same speed, like a long exposure. String lights
-// along the upper walk twinkle with the hats.
+// through the water at the same speed, like a long exposure. Kicks flare
+// every lantern's flame; snares run a flash along the string lights on the
+// upper walk, which twinkle with the hats. When the kicks stop (`groove`
+// falls) the lanterns burn low and the current slackens until the drop.
 
 const WATER_TOP: f32 = 0.70;
 const WATER_BOT: f32 = 0.16;
@@ -65,6 +67,9 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let c = centered(p);
     let t = u.time;
     let flow = params().flow;
+    let groove = params().groove;
+    // Flame strength: low embers in a breakdown, flaring on each kick.
+    let flame = (0.2 + 0.8 * groove) * (1.0 + u.kick * 2.0);
     // The stream fills up over the song.
     let density = 0.3 + 0.7 * min(u.beat_count / 96.0, 1.0);
 
@@ -81,8 +86,12 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let bspan = fract(bulb_x * 5.0);
         let bulb = vec2<f32>((bulb_x - 0.5) * u.aspect, WATER_TOP + 0.17 - 0.035 * (1.0 - pow(2.0 * bspan - 1.0, 2.0)) - 0.5 - 0.008);
         let bd = length(c - bulb);
-        let tw = 0.6 + 0.4 * sin(t * 3.0 + bulb_x * 77.0) * (0.3 + u.hat);
-        col = col + palette.colors[2].rgb * (fill(bd - 0.0035) * 1.5 + glow(bd, 0.008) * 0.12) * tw;
+        let tw = 0.6 + 0.4 * sin(t * 3.0 + bulb_x * 77.0) * (0.3 + u.hat)
+            + u.hat * step(0.75, rand2(vec2<f32>(bulb_x * 30.0, u.hat_count))) * 1.2;
+        // A snare's flash runs along the walk from left to right.
+        let run = exp(-pow((bulb_x - u.snare_age * 2.2) * 9.0, 2.0)) * exp(-u.snare_age * 1.5);
+        col = col + palette.colors[2].rgb * (fill(bd - 0.0035) * 1.5 + glow(bd, 0.008) * 0.12) * tw
+            + mix(palette.colors[2].rgb, vec3<f32>(1.0), 0.5) * (fill(bd - 0.0035) * 4.0 + glow(bd, 0.02) * 0.6) * run;
         let railing = step(WATER_TOP + 0.10, p.y) * step(p.y, WATER_TOP + 0.108);
         col = mix(col, vec3<f32>(0.03, 0.03, 0.04), railing);
     } else if (p.y > WATER_TOP || p.y < WATER_BOT) {
@@ -95,11 +104,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let tone = 0.7 + 0.3 * rand2(floor(bq));
         // Lit warmly from the water.
         let lit = select(exp(-(p.y - WATER_TOP) * 30.0), exp(-(WATER_BOT - p.y) * 20.0), near);
-        col = vec3<f32>(0.5, 0.48, 0.45) * tone * joint * (0.03 + 0.10 * lit) * (0.6 + 0.4 * u.mid_att);
+        col = vec3<f32>(0.5, 0.48, 0.45) * tone * joint * (0.03 + 0.10 * lit * flame) * (0.6 + 0.4 * u.mid_att);
     } else {
         // Water: dark, with a slow glinting ripple.
         let rip = fbm(vec2<f32>(c.x * 6.0 - flow * 8.0, p.y * 40.0));
-        col = palette.colors[0].rgb * 0.05 + vec3<f32>(0.08, 0.1, 0.16) * smoothstep(0.6, 0.9, rip) * 0.12;
+        col = palette.colors[0].rgb * 0.05 + vec3<f32>(0.08, 0.1, 0.16) * smoothstep(0.6, 0.9, rip) * (0.12 + u.hat * 0.5);
 
         // Stepping stones crossing the stream.
         let sx = 0.72 * u.aspect - 0.5 * u.aspect;
@@ -133,8 +142,9 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
                 let shimmer = 0.6 + 0.4 * sin(rq.y * 260.0 - t * 4.0);
                 let refl = exp(-pow(rq.x / (size * 0.6), 2.0)) * exp(-max(-rq.y, 0.0) / (size * 2.5)) * step(rq.y, 0.0);
                 let lc = lantern(c - center, size, seed, level);
-                col = col + palette_ramp(rand2(vec2<f32>(seed, 9.0)) * 0.999) * refl * shimmer * 0.12 * (0.3 + level);
-                col = mix(col, lc.rgb, lc.a) + lc.rgb * (1.0 - lc.a);
+                col = col + palette_ramp(rand2(vec2<f32>(seed, 9.0)) * 0.999) * refl * shimmer * 0.12 * (0.3 + level) * flame;
+                let lit = lc.rgb * flame;
+                col = mix(col, lit, lc.a) + lit * (1.0 - lc.a);
             }
         }
     }

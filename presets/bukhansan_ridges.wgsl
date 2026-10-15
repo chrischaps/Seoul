@@ -4,7 +4,9 @@
 // phrase travels back into the haze as you watch. A day passes at the pace
 // of the music (`params().day`): afterglow, then night with stars, a moon
 // and the odd snare-struck meteor, then dawn again. Mist pools in the
-// valleys and breathes with the bass.
+// valleys and surges with each kick; each snare runs a wave of light back
+// across the crests. When the kicks stop (`groove` falls), cloud shadow
+// dims the range until the drop.
 
 const LAYERS: i32 = 6;
 const LAG: f32 = 1.35; // seconds of history between neighboring ridges
@@ -32,6 +34,8 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // 1 at dusk/dawn afterglow, 0 in the middle of the night.
     let light = 0.5 + 0.5 * cos(q.day * TAU);
     let night = 1.0 - light;
+    // Cloud shadow in a breakdown.
+    let shade = 0.5 + 0.5 * q.groove;
 
     // Sky: afterglow pooling over the ridges under a deepening blue.
     let warm = palette.colors[1].rgb;
@@ -40,12 +44,13 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // Distant rock goes blue (atmospheric perspective), warmed a little by the glow.
     let haze_col = mix(palette.colors[2].rgb * mix(0.025, 0.11, light), horizon, 0.12);
     let glow_band = exp(-max(p.y - 0.52, 0.0) * 5.0);
-    var col = mix(top, horizon, glow_band);
+    var col = mix(top, horizon, glow_band) * shade;
 
     // Stars come out as it darkens; the treble sets them twinkling.
     let sp = c + vec2<f32>(t * 0.002, 0.0);
     let star = stars(sp, 70.0, 0.35);
-    let twinkle = 0.6 + 0.4 * sin(t * (2.0 + 6.0 * u.treble) + rand2(floor(sp * 70.0)) * TAU);
+    let twinkle = 0.6 + 0.4 * sin(t * (2.0 + 6.0 * u.treble) + rand2(floor(sp * 70.0)) * TAU)
+        + u.hat * step(0.7, rand2(floor(sp * 70.0) + vec2<f32>(u.hat_count, 0.0))) * 1.2;
     col = col + palette.colors[3].rgb * star * twinkle * night * night * 0.5 * smoothstep(0.3, 0.6, p.y);
 
     // A crescent moon, high on the right.
@@ -67,17 +72,25 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
 
     // Ridges, farthest first: each is darker at its crest and fades
     // downward into the mist pooled in the valley in front of the next.
-    let mist_amt = 0.45 + u.bass_att * 0.3;
+    let mist_amt = (0.3 + u.bass_att * 0.15 + u.kick * 0.55) * (0.6 + 0.4 * q.groove);
+    // Lit mist: on a kick it glows with whatever light is in the sky.
+    let mist_glow = mix(palette.colors[3].rgb * 0.05, palette.colors[1].rgb * 0.09, light) * u.kick;
     for (var k = LAYERS - 1; k >= 0; k = k - 1) {
         let i = f32(k);
         let h = ridge_top(p.x, i);
         if (p.y < h) {
             let atm = i / f32(LAYERS - 1);
-            let rock = mix(palette.colors[0].rgb * 0.003, haze_col * 0.9, pow(atm, 0.8) * 0.85);
+            let rock = mix(palette.colors[0].rgb * 0.003, haze_col * 0.9, pow(atm, 0.8) * 0.85) * shade;
             let mist = smoothstep(0.0, 0.10, h - p.y) * mist_amt * (0.1 + 0.7 * atm);
-            col = mix(rock, haze_col, mist);
-            // The afterglow catches the crests.
-            col = col + warm * smoothstep(0.004, 0.0, h - p.y) * light * (0.07 - atm * 0.05);
+            col = mix(rock, haze_col * shade + mist_glow, clamp(mist, 0.0, 1.0));
+            // The afterglow catches the crests; a snare's light runs back
+            // through the ranges, reaching ridge i after i × 70 ms.
+            let crest = smoothstep(0.006, 0.0, h - p.y);
+            let wave = exp(-pow((u.snare_age - i * 0.07) * 18.0, 2.0)) * exp(-u.snare_age * 1.5);
+            let crest_light = mix(palette.colors[3].rgb, warm, light);
+            col = col + warm * crest * light * (0.07 - atm * 0.05) * shade
+                + crest_light * crest * wave * (0.25 - atm * 0.12)
+                + crest_light * smoothstep(0.03, 0.0, h - p.y) * wave * 0.03;
         }
     }
 

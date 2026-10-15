@@ -5,7 +5,9 @@
 // bottom up as the band gets louder. Hats brighten the rain and splash the
 // street, snares flash the clouds (sometimes a bolt), and every kick drops
 // a ripple into the puddles (see jongno_rain_warp.wgsl, which also mirrors
-// everything into the wet street below the horizon).
+// everything into the wet street below the horizon) and makes the neon
+// flare. When the kicks stop (`groove` falls), the signs sputter out one by
+// one and come back on together at the drop.
 
 const HORIZON: f32 = 0.28;
 const SIGNS: f32 = 5.0;
@@ -79,6 +81,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let p = in.uv;
     let c = centered(p);
     let t = u.time;
+    let groove = params().groove;
 
     // Below the horizon is the wet street, drawn by the warp; only the
     // splashes of the heaviest drops are added here.
@@ -95,7 +98,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // Sky: city glow pooling at the horizon under slow low cloud.
     let haze = exp(-(p.y - HORIZON) * 5.0);
     var col = palette.colors[0].rgb * 0.008
-        + mix(palette.colors[1].rgb, palette.colors[3].rgb, 0.6) * haze * 0.004;
+        + mix(palette.colors[1].rgb, palette.colors[3].rgb, 0.6) * haze * (0.001 + 0.004 * groove);
     let cloud = smoothstep(0.45, 0.85, fbm(vec2<f32>(c.x * 1.4 + t * 0.012, p.y * 3.2 - t * 0.004)));
     col = col + cloud * (palette.colors[1].rgb * 0.0025 * haze + vec3<f32>(0.75, 0.82, 1.0) * flash * 0.05);
     col = col + vec3<f32>(0.75, 0.82, 1.0) * flash * 0.006;
@@ -126,14 +129,21 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let wlit = step(0.93, rand2(floor(wq) + bi * 3.0))
         * step(0.45, fract(wq.x)) * step(0.5, fract(wq.y));
     let shade = 0.6 + 0.4 * rand2(vec2<f32>(bi, 32.0));
-    col = mix(col, palette.colors[0].rgb * 0.005 * shade + vec3<f32>(0.75, 0.9, 1.0) * wlit * 0.005, in_block);
+    col = mix(col, palette.colors[0].rgb * 0.005 * shade + vec3<f32>(0.75, 0.9, 1.0) * wlit * 0.005 * (0.3 + 0.7 * groove), in_block);
 
     // Vertical neon signs, one per slot: a VU meter of Hangul syllables.
     let si = floor(p.x * SIGNS);
     let sx = ((si + 0.3 + 0.4 * rand2(vec2<f32>(si, 41.0))) / SIGNS - 0.5) * u.aspect;
     let sbottom = HORIZON + 0.13 + 0.09 * rand2(vec2<f32>(si, 42.0)) - 0.5;
     let sl = vec2<f32>(c.x - sx, c.y - sbottom) / CELL; // sign space, cells
-    let neon = sign_color(si);
+    // Power: each sign cuts out at its own point as the groove fades,
+    // sputtering on the way, and every kick flares the tubes.
+    let cut = 0.3 + 0.6 * rand2(vec2<f32>(si, 43.0));
+    let near_cut = 1.0 - smoothstep(0.0, 0.12, abs(groove - cut));
+    let buzz = step(0.5, rand2(vec2<f32>(floor(t * 18.0), si + 5.0)));
+    let power = smoothstep(cut - 0.03, cut + 0.03, groove) * (1.0 - near_cut * buzz * 0.8);
+    let flare = 1.0 + u.kick * 1.3;
+    let neon = sign_color(si) * power * flare;
     let board = sd_box(sl - vec2<f32>(0.0, CELLS * 0.5), vec2<f32>(0.62, CELLS * 0.5 + 0.12));
     if (board < 0.6) {
         let t0 = si / SIGNS;
@@ -191,9 +201,10 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         }
     }
 
-    // Rain over everything, lit by the street: hats make it glint.
+    // Rain over everything, lit by the street (darker when the neon is
+    // out): hats make it glint.
     let r = rain(c, t, 0.45, 0.12);
-    col = col + mix(vec3<f32>(0.7, 0.8, 1.0), palette.colors[3].rgb, 0.3) * r * (0.012 + u.hat * 0.03);
+    col = col + mix(vec3<f32>(0.7, 0.8, 1.0), palette.colors[3].rgb, 0.3) * r * ((0.004 + 0.010 * groove) * (1.0 + u.kick * 0.6) + u.hat * 0.03);
 
     return vec4<f32>(col, 1.0);
 }

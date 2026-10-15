@@ -8,18 +8,27 @@ edge = "fade"
 # frame is the Hutchinson operator, so whatever the composite draws converges
 # onto the maps' attractor: a Sierpinski triangle when the twist is zero, a
 # spiral galaxy of triangles when it isn't. `morph` slowly cycles the maps.
+#   kick   the fall lurches a level deeper, the maps swell (the whole
+#          attractor breathes outward) and the core flares through every copy
+#   snare  the seed ring flashes orchid in every sub-triangle at once
+#   hat    a glint runs around the ring
+#   groove (kicks flowing) without it the fall slows to a drift and the
+#          seed dims, so the attractor fades to embers until the drop
 [params]
-morph   = { rate = "0.010 + mid_att * 0.008", wrap = 1.0 }
+groove  = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+punch   = { follow = "kick", tau = 0.1 }
+snap    = { follow = "snare", tau = 0.1 }
+morph   = { rate = "0.006 + groove * 0.006 + mid_att * 0.006", wrap = 1.0 }
 wave    = "sin(morph * 6.2831853)"
-twist   = { follow = "0.32 * wave + mid * 0.06", tau = 0.3 }
-scale   = { follow = "0.49 + bass_att * 0.03 + beat * 0.025", tau = 0.15 }
-turn    = { rate = "0.03 + treble_att * 0.04" }
+twist   = { follow = "0.32 * wave + mid * 0.04", tau = 0.3 }
+scale   = { follow = "0.49 + bass_att * 0.02 + punch * 0.05", tau = 0.08 }
+turn    = { rate = "0.02 + groove * 0.02 + treble_att * 0.02" }
 psi     = "0.9 + 0.5 * cos(morph * 12.566371)"
 cscale  = "0.40 + 0.08 * cos(morph * 6.2831853)"
 cweight = "0.55 - 0.45 * cos(morph * 6.2831853)"
 # The dive: one unit of `travel` falls exactly one level into a corner.
-# Bass and beats speed the fall; each level picks the next corner.
-speed   = { follow = "0.10 + bass_att * 0.22 + beat * 0.12", tau = 0.3 }
+# Kicks shove it deeper; each level picks the next corner.
+speed   = { follow = "0.04 + groove * 0.10 + bass_att * 0.08 + kick * 1.6", tau = 0.12 }
 travel  = { rate = "speed" }
 dive    = "fract(travel)"
 corner  = "floor(travel) - 3 * floor(travel / 3)"

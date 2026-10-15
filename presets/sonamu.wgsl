@@ -82,8 +82,9 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let leaf_mask = smoothstep(0.012 / z, 0.0, tuft);
 
         let w = haze * near;
-        col = col + palette.colors[1].rgb * wood_mask * 0.022 * w;
-        col = col + palette.colors[2].rgb * leaf_mask * (0.016 + q.glow * 0.016 + u.beat * 0.014) * w;
+        let glitter = step(0.985, rand2(floor(local * 160.0) + vec2<f32>(u.hat_count, id))) * u.hat;
+        col = col + palette.colors[1].rgb * wood_mask * (0.012 + q.glow * 0.012) * w;
+        col = col + palette.colors[2].rgb * leaf_mask * (0.006 + q.glow * 0.018 + q.gust * 0.09 + glitter * 0.4) * w;
         cover = max(cover, max(wood_mask, leaf_mask) * haze);
     }
 
@@ -91,7 +92,12 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let mp = p0 - vec2<f32>(0.26 * u.aspect, 0.22);
     let moon = smoothstep(0.125, 0.118, length(mp));
     let halo = exp(-max(length(mp) - 0.12, 0.0) * 14.0);
-    col = col + palette.colors[3].rgb * (moon * 0.012 + halo * 0.003) * (1.0 - cover);
+    // In breakdowns clouds drift across the moon; the drop clears them.
+    // Kicks make the moonlight breathe; a snare sends a ring of light out.
+    let cloud = smoothstep(0.35, 0.75, fbm(mp * vec2<f32>(4.0, 9.0) + vec2<f32>(u.time * 0.05, 0.0)));
+    let veil = 1.0 - (1.0 - q.groove) * (0.35 + 0.6 * cloud);
+    let ring = exp(-pow((length(mp) - 0.13 - u.snare_age * 0.6) / 0.012, 2.0)) * exp(-u.snare_age * 3.0);
+    col = col + palette.colors[3].rgb * ((moon * 0.010 * (1.0 + q.gust * 0.5) + halo * (0.002 + q.gust * 0.016)) * veil + ring * 0.01) * (1.0 - cover);
 
     // A faint moonlit path toward the horizon.
     let ground = smoothstep(HORIZON, HORIZON - 0.5, p0.y);

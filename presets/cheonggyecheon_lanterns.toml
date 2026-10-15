@@ -1,6 +1,6 @@
 name = "Cheonggyecheon Lanterns"
 author = "seoul"
-description = "Lotus and silk lanterns drift down the stream through downtown Seoul, each glowing with one band of the music; more are set afloat as the song goes on."
+description = "Lotus and silk lanterns drift down the stream through downtown Seoul, each glowing with one band of the music and flaring on the kick; more are set afloat as the song goes on."
 edge = "clamp"
 
 [mapping]
@@ -9,10 +9,20 @@ rotation    = "0.0"
 warp_amount = "0.0"
 decay       = "0.85"
 
+# Who does what:
+#   spectrum  each lantern's inner glow is one spectrum bin
+#   kick      every lantern's flame flares, and their reflections with it
+#   snare     a flash runs along the string lights on the upper walk
+#   hat       the string lights twinkle and the water glints
+#   groove    while the kicks keep coming the stream runs bright and quick;
+#             in a kick-less breakdown the lanterns burn low and the
+#             current slackens, until the drop rekindles them
 [params]
-# The current, in screen widths per second (near lane), eased so it
-# swells with the bass without lurching; `flow` is how far it has carried.
-speed = { follow = "0.03 + bass_att * 0.025", tau = 1.5 }
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+# The current, in screen widths per second (near lane), eased so it swells
+# with the groove and the bass without lurching; `flow` is how far it has
+# carried.
+speed = { follow = "0.012 + groove * 0.025 + bass_att * 0.015", tau = 1.0 }
 flow  = { rate = "speed" }
 
 [shader]

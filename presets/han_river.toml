@@ -1,7 +1,19 @@
 name = "Han River"
 author = "seoul"
-description = "Seoul at night: a skyline that rises with the spectrum, Banpo Bridge's rainbow fountain falling on the beat, all mirrored in rippling water."
+description = "Seoul at night: a skyline that rises with the spectrum, Banpo Bridge's rainbow fountain surging on every kick, fireworks on the snare, all mirrored in rippling water."
 edge = "clamp"
+
+# Who does what:
+#   spectrum  the skyline: each tower is one band
+#   kick      the Moonlight Rainbow Fountain surges, a light runs out along
+#             the bridge deck, and the river shivers
+#   snare     fireworks over the river (the Yeouido festival)
+#   hat       office windows twinkle
+#   groove    while the kicks keep coming the city is lit; in a kick-less
+#             breakdown the fountain stops and the windows go dark, until
+#             the drop switches everything back on at once
+[params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
 
 [mapping]
 zoom        = "1.0"
@@ -20,7 +32,7 @@ color2 = [0.95, 0.35, 0.60, 1.0]   # neon pink
 color3 = [0.92, 0.94, 1.00, 1.0]   # moonlight
 
 [post]
-bloom           = 0.75
+bloom           = "0.6 + kick * 0.35"
 bloom_threshold = 0.35
 vignette        = 0.4
 grain           = 0.25

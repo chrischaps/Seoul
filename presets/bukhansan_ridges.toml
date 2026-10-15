@@ -1,6 +1,6 @@
 name = "Bukhansan Ridges"
 author = "seoul"
-description = "Granite ridgelines receding into mist, each one the song as it sounded a moment earlier; a day passes at the pace of the music."
+description = "Granite ridgelines receding into mist, each one the song as it sounded a moment earlier; kicks send mist up the valleys, snares run light back across the crests, and a day passes at the pace of the music."
 edge = "clamp"
 
 [mapping]
@@ -9,10 +9,20 @@ rotation    = "0.0"
 warp_amount = "0.0"
 decay       = "0.5"
 
+# Who does what:
+#   spectrum  the ridgelines: the nearest is now, each farther one older
+#   kick      mist surges up the valleys and the nearest crests catch light
+#   snare     a wave of light runs back across the crests, range by range
+#             (and at night, now and then, a meteor)
+#   hat       the stars twinkle
+#   groove    while the kicks keep coming the sky glows and the day turns;
+#             in a kick-less breakdown cloud shadow dims the range and time
+#             slows, until the drop brings the light back
 [params]
-# 0 → 1 is one day: afterglow at 0 and 1, deep night at 0.5. Louder music
-# turns the sky faster (a day takes about 1½–2 minutes).
-day = { rate = "0.004 + volume * 0.007", wrap = 1.0 }
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+# 0 → 1 is one day: afterglow at 0 and 1, deep night at 0.5. A day takes
+# about 1½–2 minutes while the music drives; it all but stops in a breakdown.
+day = { rate = "0.002 + groove * 0.008 + volume * 0.002", wrap = 1.0 }
 
 [shader]
 composite = "bukhansan_ridges.wgsl"

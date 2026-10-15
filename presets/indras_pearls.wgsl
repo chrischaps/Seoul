@@ -67,15 +67,19 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let parity = f32(generation % 2);
     let band = spectrum_at(clamp(g / 14.0, 0.0, 1.0));
     let tile = mix(palette.colors[1].rgb, palette.colors[2].rgb, parity);
-    var col = tile * (0.0025 + band * 0.008) * (1.0 / (1.0 + g * 0.15));
+    var col = tile * (0.001 + band * 0.008) * (0.3 + 0.7 * q.groove) * (1.0 / (1.0 + g * 0.15));
 
-    // The central tile breathes with the beat.
+    // The central tile breathes with the kick.
     if (generation == 0) {
-        col = col + palette.colors[2].rgb * u.beat * 0.025 * inside;
+        col = col + palette.colors[2].rgb * q.punch * 0.03 * inside;
     }
 
-    // Pearl rims.
-    col = col + palette.colors[3].rgb * line * (0.05 + q.shine * 0.06);
+    // A snare sends a wave of gold out through the generations.
+    let wave = exp(-pow(g - u.snare_age * 18.0, 2.0) * 0.5) * exp(-u.snare_age * 3.0);
+    col = col + palette.colors[2].rgb * wave * 0.02 * inside;
+
+    // Pearl rims, flaring on the kick.
+    col = col + palette.colors[3].rgb * line * (0.012 + q.groove * 0.035 + q.shine * 0.05 + q.punch * 0.08);
 
     // Outside the disk is the same net seen in reflection: keep it quiet.
     col = col * mix(0.15, 1.0, inside);

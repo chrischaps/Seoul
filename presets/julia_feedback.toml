@@ -1,17 +1,25 @@
 name = "Feedback Julia"
 author = "seoul"
-description = "The MilkDrop trick: no loop, just z² + c applied to last frame, and a Julia set condenses out of the light."
+description = "The MilkDrop trick: no loop, just z² + c applied to last frame, and a Julia set condenses out of the light; kicks tear it to dust."
 edge = "fade"
 
 # Each frame, a pixel at z shows what was at z² + c last frame. Light that
 # keeps landing inside survives; light that escapes fades at the edge. So
 # the image converges to the Julia set, colored by how long each point takes
 # to escape, and it regrows whenever c moves. c circles the rim of the
-# Mandelbrot set's period-2 bulb (centered at −1, home of the Basilica);
-# beats push it outside, where the set tears into dust.
+# Mandelbrot set's period-2 bulb (centered at −1, home of the Basilica).
+#   kick   shoves c outside the bulb, so the set tears into dust and regrows,
+#          and the seed of light flares; the ghost in front lunges toward you
+#   snare  turns the seed's rings vermilion for a moment
+#   hat    brightens the waveform thread woven through every orbit
+#   groove (kicks flowing) without it the walk slows, the seed dims and the
+#          set heals into calm lace
 [params]
-alpha  = { rate = "0.05 + bass_att * 0.06", wrap = 6.2831853 }
-radius = { follow = "0.245 + beat * 0.03 + bass * 0.01", tau = 0.18 }
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "kick", tau = 0.1 }
+snap   = { follow = "snare", tau = 0.12 }
+alpha  = { rate = "0.02 + groove * 0.05 + bass_att * 0.03", wrap = 6.2831853 }
+radius = { follow = "0.245 + punch * 0.06 + bass * 0.005", tau = 0.1 }
 cx     = "-1 + radius * cos(alpha)"
 cy     = "radius * sin(alpha)"
 
@@ -19,7 +27,7 @@ cy     = "radius * sin(alpha)"
 zoom        = "1"
 rotation    = "0"
 warp_amount = "0"
-decay       = "0.975"
+decay       = "0.965"
 
 [shader]
 composite = "julia_feedback.wgsl"
@@ -33,12 +41,12 @@ color3 = [0.90, 0.30, 0.25, 1.0]   # vermilion
 
 [post]
 bloom      = 0.5
-exposure   = 1.35
+exposure   = "1.15 + groove * 0.25"
 # Depth: a larger ghost of the set floats in front, swelling toward you with
 # the bass. (The warp can't zoom in: near the set, z² + c lands outside any
 # zoomed-in window, so the image would starve.)
-echo_alpha = "0.35 + bass_att * 0.15"
-echo_zoom  = "1.25 + bass_att * 0.35 + beat * 0.08"
+echo_alpha = "0.2 + groove * 0.15 + punch * 0.35"
+echo_zoom  = "1.25 + bass_att * 0.2 + punch * 0.45"
 saturation = 1.15
 vignette   = 0.35
 grain      = 0.1

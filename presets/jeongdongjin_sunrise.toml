@@ -1,6 +1,6 @@
 name = "Jeongdongjin Sunrise"
 author = "seoul"
-description = "Dawn on the east coast: every wave carries a moment of the song in from the horizon, and the sun rises as the music plays."
+description = "Dawn on the east coast: every wave carries a moment of the song in from the horizon, kicks break the near waves white, snares flare the sun, and the sun rises as the music plays."
 edge = "clamp"
 
 [mapping]
@@ -9,10 +9,19 @@ rotation    = "0.0"
 warp_amount = "0.0"
 decay       = "0.5"
 
+# Who does what:
+#   spectrum  every wave crest carries the spectrum from the moment it was
+#             born at the horizon all the way to the shore
+#   kick      the nearest waves rear up and break white
+#   snare     the sun flares, throwing rays across the sky
+#   hat       glints on the sun's path across the water
+#   groove    while the kicks keep coming the sea runs high; in a kick-less
+#             breakdown it calms and the glitter fades, until the drop
 [params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
 # 0 → 1 is a whole day: dark at 0, the sun highest at 0.5. It starts before
-# dawn, so the first minute is the sunrise; louder music speeds it along.
-sun = { rate = "0.003 + volume * 0.006", wrap = 1.0 }
+# dawn, so the first minute is the sunrise; the beat speeds it along.
+sun = { rate = "0.002 + groove * 0.005 + volume * 0.002", wrap = 1.0 }
 
 [shader]
 composite = "jeongdongjin_sunrise.wgsl"

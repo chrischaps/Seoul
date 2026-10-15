@@ -1,7 +1,18 @@
 name = "Jongno Rain"
 author = "seoul"
-description = "A wet night in an old Seoul alley: neon Hangul signs light up like VU meters, hats glint in the rain, snares bring lightning, kicks ripple the puddles."
+description = "A wet night in an old Seoul alley: neon Hangul signs light up like VU meters and flare on the kick, hats glint in the rain, snares bring lightning, kicks ripple the puddles; when the beat drops out, the neon goes dark."
 edge = "clamp"
+
+# Who does what:
+#   spectrum  each neon sign is a VU meter for one fifth of the spectrum
+#   kick      the neon flares and a ring drops into the puddles
+#   snare     lightning (a bolt about a third of the time)
+#   hat       the rain glints and splashes the street
+#   groove    while the kicks keep coming the alley is lit; in a kick-less
+#             breakdown the signs sputter out one by one, leaving rain,
+#             lightning and the lit doors, until the drop powers them back on
+[params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
 
 [mapping]
 zoom        = "1.0"
