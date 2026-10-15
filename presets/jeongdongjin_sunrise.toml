@@ -1,0 +1,31 @@
+name = "Jeongdongjin Sunrise"
+author = "seoul"
+description = "Dawn on the east coast: every wave carries a moment of the song in from the horizon, and the sun rises as the music plays."
+edge = "clamp"
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+decay       = "0.5"
+
+[params]
+# 0 → 1 is a whole day: dark at 0, the sun highest at 0.5. It starts before
+# dawn, so the first minute is the sunrise; louder music speeds it along.
+sun = { rate = "0.003 + volume * 0.006", wrap = 1.0 }
+
+[shader]
+composite = "jeongdongjin_sunrise.wgsl"
+
+[palette]
+color0 = [0.08, 0.10, 0.28, 1.0]   # pre-dawn navy
+color1 = [1.00, 0.40, 0.32, 1.0]   # coral
+color2 = [1.00, 0.76, 0.38, 1.0]   # gold
+color3 = [0.10, 0.38, 0.52, 1.0]   # sea teal
+
+[post]
+bloom           = 0.7
+bloom_threshold = 0.5
+vignette        = 0.35
+grain           = 0.2
+saturation      = 1.05
