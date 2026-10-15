@@ -1,0 +1,28 @@
+name = "Jongno Rain"
+author = "seoul"
+description = "A wet night in an old Seoul alley: neon Hangul signs light up like VU meters, hats glint in the rain, snares bring lightning, kicks ripple the puddles."
+edge = "clamp"
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+decay       = "0.80"
+
+[shader]
+composite = "jongno_rain.wgsl"
+warp      = "jongno_rain_warp.wgsl"
+
+[palette]
+color0 = [0.03, 0.04, 0.10, 1.0]   # rain-dark indigo
+color1 = [1.00, 0.20, 0.52, 1.0]   # neon pink
+color2 = [0.12, 0.85, 1.00, 1.0]   # neon cyan
+color3 = [1.00, 0.64, 0.30, 1.0]   # hanji lamplight
+
+[post]
+bloom           = 0.9
+bloom_threshold = 0.3
+vignette        = 0.45
+grain           = 0.3
+saturation      = 1.1
+chroma          = "snare * 0.25"

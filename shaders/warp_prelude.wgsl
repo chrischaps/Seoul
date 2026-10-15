@@ -142,3 +142,21 @@ fn finish(src: vec2<f32>, col_in: vec3<f32>) -> vec4<f32> {
     }
     return vec4<f32>(max(col, vec3<f32>(0.0)) * w.decay, 1.0);
 }
+
+// Water below a horizon: at texture-space `uv` (below `horizon_t`), last
+// frame's sky mirrored across the horizon, displaced by two crossing ripple
+// trains and dimming with depth. `stir` scales the ripples (try
+// `0.6 + u.bass * 0.8`); `phase` shifts the near ripple train (try
+// `u.mid * 3.0`). Returns the reflection before decay — multiply by
+// `w.decay`. See presets/han_river_warp.wgsl.
+fn water_reflect(uv: vec2<f32>, horizon_t: f32, stir: f32, phase: f32) -> vec3<f32> {
+    let depth = uv.y - horizon_t;
+    let t = w.time;
+    let ripple = 0.6 * sin(uv.y * 150.0 - t * 2.2 + phase)
+               + 0.4 * sin(uv.y * 63.0 + uv.x * 5.0 + t * 1.3);
+    var src = vec2<f32>(uv.x, horizon_t - depth);
+    src.x = src.x + ripple * (0.0015 + depth * 0.03) * stir;
+    src.y = src.y - abs(ripple) * depth * 0.02;
+    // Water reflects less of the sky the deeper you look.
+    return max(sample_prev(src) * (0.6 - depth * 0.9), vec3<f32>(0.0));
+}

@@ -75,6 +75,7 @@ Per hop, over the last 2048 samples:
 | `volume` | RMS with the same AGC + follower |
 | `spectrum[64]` | log-spaced 40 Hz–16 kHz, per-bin power in dB + 3 dB/octave tilt, mapped to 0..1 below a reference that tracks the loudest bin (6 dB/s release, −35 dB floor, 48 dB range); fast rise, slow fall |
 | `beat` | spectral flux of log-compressed magnitudes (kick band 30–180 Hz + ½ broadband), adaptive threshold mean + 1.5σ over ~1 s, one-hop-late peak picking, 180 ms refractory; envelope jumps to 1 and decays with τ = 100 ms |
+| `kick`, `snare`, `hat` (+ `*_age`, `*_count`) | one detector per instrument, same peak picker as `beat` plus a floor of a fraction of the band's recent peak: kick = *linear*-magnitude flux 30–180 Hz (log flux would fire on bass beating against a kick's tail), snare = linear flux 1–4 kHz (hats leak ~20 dB below claps there), hat = log flux 7–16 kHz. A hat within 40 ms of a snare, in either order, is retracted as the clap's own noise. `*_age` is seconds since the last hit (1000 before any); `*_count` lets shaders hash each hit |
 | `bpm`, `bpm_confidence` | inter-onset-interval histogram over the last 10 s (pairs 0.25–2 s apart, folded into 80–160 BPM, Gaussian-smeared, parabolic peak); confidence = mass near the peak |
 | `beat_phase` | oscillator at `bpm`, nudged toward 0 when a detected beat lands near it |
 | `waveform[512]` | trigger-aligned to the steepest rising zero crossing, auto-gained, 24-sample sin² taper at both ends (so circular plots close), light temporal smoothing |
@@ -89,8 +90,9 @@ and per-band balance.
 
 ## `AudioFeatures`: CPU snapshot and GPU layout
 
-`AudioFeatures` (`audio/features.rs`) is `#[repr(C)] Pod`: 20 scalars
-(including `resolution: vec2` on a 16-byte boundary), then
+`AudioFeatures` (`audio/features.rs`) is `#[repr(C)] Pod`: a 32-scalar header
+(including `resolution: vec2` on a 16-byte boundary, then rows of drum
+envelopes, ages and counts, each padded to a vec4), then
 `spectrum[64]` and `waveform[512]`. It is uploaded verbatim to a storage
 buffer bound by every composite, warp and particle pipeline. The WGSL
 mirror lives in **`shaders/common.wgsl`** and must match field for field; a
@@ -258,8 +260,8 @@ as a fallback. Text buffers re-shape only when their content changes;
 panels and meters are instanced SDF rounded rects (`shaders/hud.wgsl`)
 with premultiplied blending. Elements: startup 서울 wordmark, preset toasts
 (palette-colored accent, drop shadow), key notices, help (H), stats (F1:
-FPS, tempo, beat phase, band meters with ~1 s average ticks, spectrum
-strip, audio device), and the preset error panel. `P` screenshots include
+FPS, tempo, beat phase, band meters with ~1 s average ticks, kick/snare/hat
+lamps, spectrum strip, audio device), and the preset error panel. `P` screenshots include
 the HUD (the post and HUD passes are re-run offscreen for the last frame).
 
 ## Verification tooling

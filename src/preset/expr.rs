@@ -49,6 +49,15 @@ pub enum VarKind {
     TrebleAtt,
     Volume,
     Beat,
+    Kick,
+    Snare,
+    Hat,
+    KickAge,
+    SnareAge,
+    HatAge,
+    KickCount,
+    SnareCount,
+    HatCount,
     Time,
     Dt,
     Frame,
@@ -143,6 +152,15 @@ impl Expr {
                 VarKind::TrebleAtt => ctx.features.treble_att,
                 VarKind::Volume => ctx.features.volume,
                 VarKind::Beat => ctx.features.beat,
+                VarKind::Kick => ctx.features.kick,
+                VarKind::Snare => ctx.features.snare,
+                VarKind::Hat => ctx.features.hat,
+                VarKind::KickAge => ctx.features.kick_age,
+                VarKind::SnareAge => ctx.features.snare_age,
+                VarKind::HatAge => ctx.features.hat_age,
+                VarKind::KickCount => ctx.features.kick_count,
+                VarKind::SnareCount => ctx.features.snare_count,
+                VarKind::HatCount => ctx.features.hat_count,
                 VarKind::Time => ctx.features.time,
                 VarKind::Dt => ctx.features.dt,
                 VarKind::Frame => ctx.features.frame,
@@ -437,6 +455,15 @@ fn lookup_var(name: &str) -> Option<VarKind> {
         "treble_att" => VarKind::TrebleAtt,
         "volume" => VarKind::Volume,
         "beat" => VarKind::Beat,
+        "kick" => VarKind::Kick,
+        "snare" => VarKind::Snare,
+        "hat" => VarKind::Hat,
+        "kick_age" => VarKind::KickAge,
+        "snare_age" => VarKind::SnareAge,
+        "hat_age" => VarKind::HatAge,
+        "kick_count" => VarKind::KickCount,
+        "snare_count" => VarKind::SnareCount,
+        "hat_count" => VarKind::HatCount,
         "time" => VarKind::Time,
         "dt" => VarKind::Dt,
         "frame" => VarKind::Frame,
@@ -507,6 +534,8 @@ mod tests {
         assert_eq!(eval("treble", &f), 0.9);
         assert_eq!(eval("beat", &f), 1.0);
         assert_eq!(eval("time", &f), 2.5);
+        let drums = AudioFeatures { kick: 0.5, snare: 0.25, hat: 0.125, ..Default::default() };
+        assert_eq!(eval("kick + snare * 10 + hat * 100", &drums), 15.5);
     }
 
     #[test]

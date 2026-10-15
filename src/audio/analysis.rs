@@ -51,6 +51,20 @@ const ONSET_MIN: f32 = 0.02;
 const BEAT_REFRACTORY: f32 = 0.18;
 const BEAT_TAU: f32 = 0.10;
 
+// Per-instrument onsets (kick / snare / hat): refractory s, envelope tau s,
+// the fraction of the band's recent peak an onset must reach, and an
+// absolute floor. Kick and snare use linear-magnitude flux (bass beating
+// against a kick's tail, or a hat leaking into the snare band, is a large
+// *log* change but a small linear one); hats use log flux so quiet ticks
+// still register.
+const KICK_TIMING: OnsetTiming = OnsetTiming { refractory: 0.12, tau: 0.10, rel: 0.4, floor: 0.002 };
+const SNARE_TIMING: OnsetTiming = OnsetTiming { refractory: 0.10, tau: 0.12, rel: 0.4, floor: 0.0005 };
+const HAT_TIMING: OnsetTiming = OnsetTiming { refractory: 0.06, tau: 0.05, rel: 0.25, floor: ONSET_MIN };
+/// A hat onset this close to a snare onset is the snare's own noise.
+const HAT_SNARE_MASK: f32 = 0.04;
+/// `*_age` before the first onset, and its ceiling.
+const AGE_MAX: f32 = 1000.0;
+
 // Tempo estimation.
 const TEMPO_WINDOW_S: f32 = 10.0;
 const BPM_MIN: f32 = 80.0;
@@ -146,6 +160,7 @@ pub struct Analyzer {
     mags: Vec<f32>,
     log_mags: Vec<f32>,
     prev_log_mags: Vec<f32>,
+    prev_mags: Vec<f32>,
 
     rolling: Vec<f32>,
     write_pos: usize,
@@ -156,6 +171,8 @@ pub struct Analyzer {
     spectrum_tilt_db: Vec<f32>,
     bands: [(usize, usize); 3],
     kick_range: (usize, usize),
+    snare_range: (usize, usize),
+    hat_range: (usize, usize),
     flux_hi_bin: usize,
 
     band_ref: [f32; 3],
@@ -172,6 +189,8 @@ pub struct Analyzer {
     since_beat: f32,
     beat: f32,
     beat_count: u32,
+    /// kick, snare, hat.
+    drums: [OnsetDetector; 3],
 
     clock: f32,
     onset_times: VecDeque<f32>,
@@ -237,6 +256,7 @@ impl Analyzer {
             mags: vec![0.0; n_bins],
             log_mags: vec![0.0; n_bins],
             prev_log_mags: vec![0.0; n_bins],
+            prev_mags: vec![0.0; n_bins],
             rolling: vec![0.0; FFT_SIZE],
             write_pos: 0,
             pending: 0,
@@ -245,6 +265,8 @@ impl Analyzer {
             spectrum_tilt_db,
             bands,
             kick_range: (hz(30.0), hz(180.0)),
+            snare_range: (hz(1000.0), hz(4000.0)),
+            hat_range: (hz(7000.0), hz(16000.0)),
             flux_hi_bin: hz(8000.0),
             band_ref: [db_to_amp(FLOOR_DB); 3],
             band_val: [0.0; 3],
@@ -259,6 +281,11 @@ impl Analyzer {
             since_beat: f32::INFINITY,
             beat: 0.0,
             beat_count: 0,
+            drums: [
+                OnsetDetector::new(onset_hist_len, KICK_TIMING),
+                OnsetDetector::new(onset_hist_len, SNARE_TIMING),
+                OnsetDetector::new(onset_hist_len, HAT_TIMING),
+            ],
             clock: 0.0,
             onset_times: VecDeque::new(),
             bpm: BPM_DEFAULT,
@@ -330,6 +357,10 @@ impl Analyzer {
         f.bpm = self.bpm;
         f.bpm_confidence = self.bpm_confidence;
         f.beat_phase = self.phase;
+        let [k, s, h] = &self.drums;
+        (f.kick, f.snare, f.hat) = (k.env, s.env, h.env);
+        (f.kick_age, f.snare_age, f.hat_age) = (k.age, s.age, h.age);
+        (f.kick_count, f.snare_count, f.hat_count) = (k.hits as f32, s.hits as f32, h.hits as f32);
     }
 
     fn update_bands(&mut self, dt: f32) {
@@ -395,6 +426,23 @@ impl Analyzer {
         };
         let kick = flux(self.kick_range, &self.log_mags, &self.prev_log_mags);
         let broad = flux((1, self.flux_hi_bin), &self.log_mags, &self.prev_log_mags);
+        // Snares and claps are noise centered in the upper mids; hats live
+        // above 7 kHz. Each band gets its own detector.
+        let hat = flux(self.hat_range, &self.log_mags, &self.prev_log_mags);
+        let kick_lin = flux(self.kick_range, &self.mags, &self.prev_mags);
+        let snare = flux(self.snare_range, &self.mags, &self.prev_mags);
+        self.prev_mags.copy_from_slice(&self.mags);
+        self.drums[0].step(kick_lin, dt);
+        let snare_hit = self.drums[1].step(snare, dt);
+        let hat_hit = self.drums[2].step(hat, dt);
+        // A clap's noise reaches the hat band too, and its log flux can peak
+        // a hop before the snare band's: whichever fires first, the hat yields.
+        if (snare_hit || hat_hit)
+            && self.drums[1].since < HAT_SNARE_MASK
+            && self.drums[2].since < HAT_SNARE_MASK
+        {
+            self.drums[2].retract();
+        }
         std::mem::swap(&mut self.log_mags, &mut self.prev_log_mags);
         let onset = kick + 0.5 * broad;
 
@@ -491,6 +539,91 @@ impl Analyzer {
             let target = (s * gain).clamp(-1.0, 1.0) * taper;
             *out += (target - *out) * 0.6;
         }
+    }
+}
+
+/// Adaptive-threshold peak picker for one band's onset strength, with a
+/// decaying 0..1 envelope. Same scheme as the main beat detector, minus
+/// the tempo tracking.
+#[derive(Clone, Copy)]
+struct OnsetTiming {
+    refractory: f32,
+    tau: f32,
+    rel: f32,
+    floor: f32,
+}
+
+struct OnsetDetector {
+    hist: VecDeque<f32>,
+    hist_len: usize,
+    prev: [f32; 2],
+    since: f32,
+    timing: OnsetTiming,
+    env: f32,
+    /// Seconds since the last (unretracted) onset, and its value before
+    /// the latest one so a retraction can restore it.
+    age: f32,
+    age_before: f32,
+    /// Onsets reported so far, net of retractions.
+    hits: u32,
+    retracted: bool,
+}
+
+impl OnsetDetector {
+    fn new(hist_len: usize, timing: OnsetTiming) -> Self {
+        Self {
+            hist: VecDeque::with_capacity(hist_len + 1),
+            hist_len,
+            prev: [0.0; 2],
+            since: f32::INFINITY,
+            timing,
+            env: 0.0,
+            age: AGE_MAX,
+            age_before: AGE_MAX,
+            hits: 0,
+            retracted: false,
+        }
+    }
+
+    /// Withdraw the most recent onset (it belonged to another instrument).
+    /// Its refractory period still holds, so the same sound can't re-fire.
+    fn retract(&mut self) {
+        if !self.retracted {
+            self.retracted = true;
+            self.env = 0.0;
+            self.age = (self.age_before + self.age).min(AGE_MAX);
+            self.hits -= 1;
+        }
+    }
+
+    /// Feed this hop's onset strength. Returns true on a detected onset.
+    fn step(&mut self, onset: f32, dt: f32) -> bool {
+        let n = self.hist.len().max(1) as f32;
+        let mean = self.hist.iter().sum::<f32>() / n;
+        let var = self.hist.iter().map(|o| (o - mean).powi(2)).sum::<f32>() / n;
+        let peak = self.hist.iter().fold(0.0f32, |m, &o| m.max(o));
+        let threshold = (mean + ONSET_K * var.sqrt() + self.timing.floor).max(peak * self.timing.rel);
+
+        let [prev2, prev1] = self.prev;
+        self.since += dt;
+        self.age = (self.age + dt).min(AGE_MAX);
+        self.env *= (-dt / self.timing.tau).exp();
+        let hit = prev1 > prev2 && prev1 >= onset && prev1 > threshold && self.since > self.timing.refractory;
+        if hit {
+            self.since = 0.0;
+            self.env = 1.0;
+            self.age_before = self.age;
+            self.age = 0.0;
+            self.hits += 1;
+            self.retracted = false;
+        }
+
+        self.prev = [prev1, onset];
+        self.hist.push_back(onset);
+        if self.hist.len() > self.hist_len {
+            self.hist.pop_front();
+        }
+        hit
     }
 }
 
@@ -645,6 +778,7 @@ mod tests {
         let f = a.features();
         assert!(f.bass < 0.05 && f.treble < 0.05, "bass {} treble {}", f.bass, f.treble);
         assert_eq!(f.beat_count, 0.0);
+        assert!(a.drums.iter().all(|d| d.hits == 0), "drum hits on hiss");
     }
 
     #[test]
@@ -724,6 +858,36 @@ mod tests {
         let a = run(0.5, |t| 0.5 * (std::f32::consts::TAU * 200.0 * t).cos(), |_| {});
         let w = &a.features().waveform;
         assert!(w[0].abs() < 1e-3 && w[WAVEFORM_SAMPLES - 1].abs() < 1e-3);
+    }
+
+    #[test]
+    fn drums_are_told_apart() {
+        // The --synth track at 124 BPM: kick on every beat, clap on 2 and 4,
+        // hats on the off-beat eighths; bar 8 drops the kick. Count onsets
+        // per instrument over bars 2–7 (6 bars = 24 beats).
+        use crate::audio::synth::{SAMPLE_RATE, Synth};
+        let mut synth = Synth::default();
+        let mut a = Analyzer::new(SAMPLE_RATE);
+        let beat_len = 60.0 / 124.0;
+        let samples = |beats: f32| (beats * beat_len * SAMPLE_RATE as f32) as usize;
+        // Start just before a beat so its onset lands inside the window.
+        let warmup: Vec<f32> = (0..samples(3.9)).map(|_| synth.next_sample()).collect();
+        a.push(&warmup);
+        let start = a.drums.each_ref().map(|d| d.hits);
+        let body: Vec<f32> = (0..samples(24.0)).map(|_| synth.next_sample()).collect();
+        a.push(&body);
+        let [kick, snare, hat] = [0, 1, 2].map(|i| a.drums[i].hits - start[i]);
+        assert!((23..=25).contains(&kick), "kick {kick} (expect 24)");
+        assert!((11..=13).contains(&snare), "snare {snare} (expect 12)");
+        assert!((23..=25).contains(&hat), "hat {hat} (expect 24)");
+
+        // Ages and counts reach the features. The run ends 0.9 beats
+        // (0.44 s) after the last kick and 0.4 beats (0.19 s) after the last
+        // off-beat hat, less a few ms of detection latency.
+        let f = a.features();
+        assert_eq!(f.kick_count, a.drums[0].hits as f32);
+        assert!((0.35..0.45).contains(&f.kick_age), "kick_age {}", f.kick_age);
+        assert!((0.12..0.2).contains(&f.hat_age), "hat_age {}", f.hat_age);
     }
 
     #[test]

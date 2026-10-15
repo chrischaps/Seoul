@@ -577,7 +577,7 @@ impl Hud {
 
         let x = self.size.0 as f32 - panel_w - 24.0 * u;
         let y = 24.0 * u;
-        let meters_h = 3.0 * 12.0 * u + 52.0 * u;
+        let meters_h = 3.0 * 12.0 * u + 16.0 * u + 52.0 * u;
         let panel_h = 18.0 * u + th + 14.0 * u + meters_h + 18.0 * u;
         self.rect(x, y, panel_w, panel_h, [0.0, 0.0, 0.0, 0.62], 12.0 * u);
         areas.push((LabelId::Stats, x + 18.0 * u, y + 16.0 * u, 0.92));
@@ -599,6 +599,18 @@ impl Hud {
             self.rect(bx + inner_w * att.clamp(0.0, 1.0) - 1.0 * u, my - 2.0 * u, 2.0 * u, 10.0 * u, [1.0, 1.0, 1.0, 0.7], 1.0 * u);
             my += 12.0 * u;
         }
+
+        // Drum lamps: kick, snare, hat, each lit by its onset envelope.
+        my += 2.0 * u;
+        let gap = 8.0 * u;
+        let lamp_w = (inner_w - 2.0 * gap) / 3.0;
+        let drums = [(f.kick, [0.98, 0.42, 0.40]), (f.snare, [0.98, 0.80, 0.36]), (f.hat, [0.42, 0.78, 0.98])];
+        for (i, (v, c)) in drums.into_iter().enumerate() {
+            let lx = x + 18.0 * u + i as f32 * (lamp_w + gap);
+            self.rect(lx, my, lamp_w, 6.0 * u, [1.0, 1.0, 1.0, 0.08], 3.0 * u);
+            self.rect(lx, my, lamp_w, 6.0 * u, srgb(c, 0.9 * v.clamp(0.0, 1.0)), 3.0 * u);
+        }
+        my += 14.0 * u;
 
         // Spectrum strip.
         my += 6.0 * u;

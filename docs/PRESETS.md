@@ -117,6 +117,11 @@ Arithmetic `+ - * /`, parentheses, unary minus, and:
   `bass_att mid_att treble_att` (~1 s averages), `beat` (jumps to 1 on a
   beat, decays in ~0.1 s), `beat_phase` (0→1 between beats at the detected
   tempo), `beat_count`, `bpm`, `time` (seconds), `dt`, `frame`, `aspect`.
+- **Drums:** `kick snare hat` jump to 1 on that instrument's onset and
+  decay in 0.05–0.12 s; `kick_age snare_age hat_age` are seconds since its
+  last hit (good for things that spread or fade, like ripples);
+  `kick_count snare_count hat_count` number the hits, so
+  `rand2(vec2<f32>(u.snare_count, 1.0))` gives each hit its own variation.
 - **Functions** (WGSL semantics): `sin cos tan abs sqrt exp log floor fract
   sign pow min max atan2 step clamp mix smoothstep`.
 
@@ -221,6 +226,23 @@ A feedback warp built from an expanding map (z² + c) can't zoom in: near
 the set it samples outside the zoomed window. Use the `[post]` video echo
 for depth there instead.
 
+**Scene kit**, for drawing places and things (distances in `centered`
+units, negative inside):
+
+| Helper | |
+|---|---|
+| `sd_circle(p, r)`, `sd_box(p, half)`, `sd_segment(p, a, b)` | signed distances |
+| `fill(d)` | antialiased 1-inside / 0-outside of a distance |
+| `glow(d, r)` | soft light falloff outside a shape |
+| `ridge(x, seed, rough)` | mountain ridgeline height 0..1 |
+| `hanok_roof(x)` | tiled-roof profile for `x` in −1..1 (−1 outside) |
+| `stars(p, scale, density)` | static starfield |
+| `rain(p, t, density, slant)` | falling streaks |
+
+Because the composite is added on top of the warped past, a solid object
+"occludes" simply by being what this pixel returns: draw back to front,
+replacing `col` rather than adding to it. See `presets/jongno_rain.wgsl`.
+
 ## A custom warp
 
 Add `warp = "x_warp.wgsl"` and write `fs_warp`. It must return last frame's
@@ -241,9 +263,12 @@ Here `in.uv` is **texture space (y down)**. The warp prelude provides:
 `sample_prev(uv)` (honors `edge`), `blur4(uv, r)`, `warp_uv(uv)` (the TOML
 `[mapping]` transform), `finish(src, color)`, `centered(uv)` /
 `uncentered(c)` (y up), `frame_k()`, the warp uniforms `w.*` (already
-frame-rate normalized), `u`, `palette`, and all the common helpers. See
-`presets/ink_warp.wgsl` (fluid advection) and `presets/han_river_warp.wgsl`
-(water reflection) for complete examples.
+frame-rate normalized), `u`, `palette`, and all the common helpers, plus
+`water_reflect(uv, horizon_t, stir, phase)`: the scene above `horizon_t`
+mirrored into rippling water below it. See `presets/ink_warp.wgsl` (fluid
+advection), `presets/han_river_warp.wgsl` (water reflection) and
+`presets/jongno_rain_warp.wgsl` (reflection plus kick ripples) for
+complete examples.
 
 A warp can also *be* the fractal. Gather last frame through a few
 contracting maps and keep the brightest, and the feedback loop runs an

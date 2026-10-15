@@ -28,6 +28,21 @@ struct AudioFeatures {
     resolution: vec2<f32>,
     pad: vec2<f32>,
 
+    kick: f32,
+    snare: f32,
+    hat: f32,
+    pad2: f32,
+
+    kick_age: f32,
+    snare_age: f32,
+    hat_age: f32,
+    pad3: f32,
+
+    kick_count: f32,
+    snare_count: f32,
+    hat_count: f32,
+    pad4: f32,
+
     spectrum: array<f32, 64>,
     waveform: array<f32, 512>,
 };
@@ -130,4 +145,84 @@ fn curl_noise(p: vec2<f32>) -> vec2<f32> {
     let dx = fbm(p + vec2<f32>(e, 0.0)) - fbm(p - vec2<f32>(e, 0.0));
     let dy = fbm(p + vec2<f32>(0.0, e)) - fbm(p - vec2<f32>(0.0, e));
     return vec2<f32>(dy, -dx) / (2.0 * e);
+}
+
+// ---- Scene kit --------------------------------------------------------------
+// Building blocks for representational presets (Han River, Jongno Rain…).
+// Distances are in `centered` units (screen heights); negative is inside.
+
+fn sd_circle(p: vec2<f32>, r: f32) -> f32 {
+    return length(p) - r;
+}
+
+// Axis-aligned box with half-size `b`, centered at the origin.
+fn sd_box(p: vec2<f32>, b: vec2<f32>) -> f32 {
+    let d = abs(p) - b;
+    return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0);
+}
+
+// Distance to the segment a–b (a line with round caps; subtract a width).
+fn sd_segment(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+// Antialiased solid fill of a signed distance: 1 inside, 0 outside.
+fn fill(d: f32) -> f32 {
+    let aa = 1.0 / max(u.resolution.y, 1.0);
+    return smoothstep(aa, -aa, d);
+}
+
+// Soft light falloff around a shape: 1 at its edge, ~0.37 at distance `r`.
+fn glow(d: f32, r: f32) -> f32 {
+    let x = max(d, 0.0) / r;
+    return exp(-x * x);
+}
+
+// A mountain ridgeline: height 0..1 along `x`, `seed` picks the range,
+// `rough` 0..1 trades rolling hills for jagged peaks.
+fn ridge(x: f32, seed: f32, rough: f32) -> f32 {
+    let p = vec2<f32>(x, seed * 13.7);
+    let broad = fbm(p * 1.3);
+    let fine = vnoise(p * 9.0) * 0.5 + vnoise(p * 23.0) * 0.25;
+    return clamp(broad * (1.0 - 0.35 * rough) + (fine - 0.375) * 0.4 * rough, 0.0, 1.0);
+}
+
+// Profile of a hanok (Korean tiled) roof, `x` in -1..1 across its width:
+// a steep concave sweep from the ridge that flattens toward the eaves and
+// lifts at the tips. Returns the roof's top height 0..1 (1 at the ridge),
+// or -1 outside the roof.
+fn hanok_roof(x: f32) -> f32 {
+    let a = abs(x);
+    if (a > 1.0) {
+        return -1.0;
+    }
+    let lift = smoothstep(0.7, 1.0, a);
+    return (1.0 - a) * (1.0 - a) * 0.85 + 0.15 + 0.15 * lift * lift;
+}
+
+// A static starfield at `p`: `scale` cells per unit, `density` 0..1 the
+// fraction of cells holding a star. Returns brightness 0..1; multiply by
+// your own twinkle.
+fn stars(p: vec2<f32>, scale: f32, density: f32) -> f32 {
+    let q = p * scale;
+    let cell = floor(q);
+    let pos = vec2<f32>(rand2(cell), rand2(cell + 71.3)) * 0.8 + 0.1;
+    let d = length(fract(q) - pos);
+    let size = 0.04 + 0.08 * rand2(cell + 19.1);
+    return step(rand2(cell + 5.7), density) * smoothstep(size, 0.0, d);
+}
+
+// Falling rain streaks at `p` and time `t`: `density` 0..1, `slant` the
+// horizontal drift per unit of fall. Returns streak brightness 0..1.
+fn rain(p: vec2<f32>, t: f32, density: f32, slant: f32) -> f32 {
+    let q = vec2<f32>(p.x - p.y * slant, p.y) * vec2<f32>(160.0, 3.0);
+    let col = floor(q.x);
+    let speed = 2.5 + 1.5 * rand2(vec2<f32>(col, 1.0));
+    let y = fract(q.y + t * speed + rand2(vec2<f32>(col, 2.0)));
+    let streak = smoothstep(0.0, 0.08, y) * smoothstep(0.30, 0.10, y);
+    let thin = smoothstep(0.5, 0.1, abs(fract(q.x) - 0.5));
+    return streak * thin * step(rand2(vec2<f32>(col, 3.0)), density);
 }

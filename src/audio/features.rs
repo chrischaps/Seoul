@@ -49,16 +49,34 @@ pub struct AudioFeatures {
     pub resolution: [f32; 2],
     pub _pad: [f32; 2],
 
+    // Per-instrument onset envelopes, 0..1: each jumps to 1 when its band
+    // has an onset (low thump, mid crack/clap, high tick) and decays in
+    // ~0.05–0.12 s. Independent of `beat`, which is the tempo-tracking onset.
+    pub kick: f32,
+    pub snare: f32,
+    pub hat: f32,
+    pub _pad2: f32,
+    /// Seconds since each instrument's last onset (capped at 1000).
+    pub kick_age: f32,
+    pub snare_age: f32,
+    pub hat_age: f32,
+    pub _pad3: f32,
+    /// Onsets detected since start — hash these to vary each hit.
+    pub kick_count: f32,
+    pub snare_count: f32,
+    pub hat_count: f32,
+    pub _pad4: f32,
+
     /// Log-spaced spectrum, 0..1, perceptually tilted.
     pub spectrum: [f32; SPECTRUM_BINS],
     /// Trigger-aligned, auto-gained waveform, roughly -1..1, ends tapered to 0.
     pub waveform: [f32; WAVEFORM_SAMPLES],
 }
 
-// Header (20 scalars) + spectrum + waveform. If this fails, the WGSL prelude
+// Header (32 scalars) + spectrum + waveform. If this fails, the WGSL prelude
 // is out of sync with the Rust struct.
 const _: () = assert!(
-    std::mem::size_of::<AudioFeatures>() == (20 + SPECTRUM_BINS + WAVEFORM_SAMPLES) * 4
+    std::mem::size_of::<AudioFeatures>() == (32 + SPECTRUM_BINS + WAVEFORM_SAMPLES) * 4
 );
 
 impl Default for AudioFeatures {
