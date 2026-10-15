@@ -179,6 +179,7 @@ and helpers:
 | `waveform_at(theta)` | waveform around a circle (seamless) |
 | `waveform_lin(t)` | waveform left→right, `t` in 0..1 |
 | `spectrum_at(t)` | spectrum low→high, interpolated |
+| `spectrum_ago(t, seconds)` | the spectrum as it was up to 8.5 s ago — draw the recent past (see Bukhansan Ridges, Jeongdongjin Sunrise) |
 | `palette_ramp(t)` | smooth ramp through the 4 palette colors |
 | `hue_rotate(c, a)`, `luma(c)` | color utilities |
 | `rand2(p)`, `vnoise(p)`, `fbm(p)` | hash, value noise, 4-octave fractal noise |

@@ -98,6 +98,17 @@ buffer bound by every composite, warp and particle pipeline. The WGSL
 mirror lives in **`shaders/common.wgsl`** and must match field for field; a
 `const` size assertion in Rust guards drift.
 
+## Spectrum history
+
+`render/history.rs` keeps the last 8.5 s of spectrum as a 64×256 `R32Float`
+ring texture, one row per 1/30 s of *render* time (frame-rate independent
+and deterministic under `--record`). It is bound beside `u` in the shared
+audio bind group (binding 1; each prelude declares `hist`). The render
+thread stamps `u.hist_pos` = newest row + progress toward the next, so
+`spectrum_ago(t, seconds)` (in `common.wgsl`) scrolls smoothly; it reads
+with `textureLoad` and interpolates by hand, since 32-bit float textures
+aren't filterable without an optional feature.
+
 ## Timing model
 
 - The **render thread owns the clock**: it stamps `time`, `dt`, `frame`,

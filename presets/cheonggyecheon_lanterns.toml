@@ -1,0 +1,46 @@
+name = "Cheonggyecheon Lanterns"
+author = "seoul"
+description = "Lotus and silk lanterns drift down the stream through downtown Seoul, each glowing with one band of the music; more are set afloat as the song goes on."
+edge = "clamp"
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+decay       = "0.85"
+
+[params]
+# The current, in screen widths per second (near lane), eased so it
+# swells with the bass without lurching; `flow` is how far it has carried.
+speed = { follow = "0.03 + bass_att * 0.025", tau = 1.5 }
+flow  = { rate = "speed" }
+
+[shader]
+composite = "cheonggyecheon_lanterns.wgsl"
+warp      = "cheonggyecheon_lanterns_warp.wgsl"
+
+[palette]
+color0 = [0.06, 0.08, 0.20, 1.0]   # night water
+color1 = [1.00, 0.35, 0.45, 1.0]   # lotus pink
+color2 = [1.00, 0.72, 0.32, 1.0]   # lamplight
+color3 = [0.55, 0.85, 0.45, 1.0]   # celadon
+
+[particles]
+count     = 1500
+spawn     = "random"
+speed     = 0.01
+flow      = 0.3
+flow_scale = 2.0
+drag      = 1.0
+size      = 2.0
+life      = 4.0
+color     = 2
+gravity   = -0.02
+intensity = 0.015
+
+[post]
+bloom           = 0.45
+bloom_threshold = 0.6
+vignette        = 0.4
+grain           = 0.2
+saturation      = 1.1
