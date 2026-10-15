@@ -15,7 +15,8 @@ use tracing::{info, warn};
 use crate::audio::AudioFeatures;
 use crate::preset::curation::{Curation, ShuffleBag};
 use crate::preset::expr::EvalContext;
-use crate::preset::preset::PresetSpec;
+use crate::preset::params::{ParamState, wgsl_accessor};
+use crate::preset::preset::{PresetSpec, PresetUniforms};
 use crate::preset::shader::{
     CompositeLayouts, build_composite_pipeline, compile_composite_shader, make_palette_resources,
 };
@@ -36,9 +37,11 @@ pub struct Preset {
     pub pipeline: wgpu::RenderPipeline,
     /// Custom warp, if the preset ships one.
     pub warp_pipeline: Option<wgpu::RenderPipeline>,
-    // Kept alive to back `palette_bg`.
-    _palette_buf: wgpu::Buffer,
+    /// Palette + `[params]` values; backs `palette_bg`.
+    uniform_buf: wgpu::Buffer,
     pub palette_bg: wgpu::BindGroup,
+    /// Live `[params]` values (reset when the preset is rebuilt).
+    params: ParamState,
 }
 
 /// GPU layouts a preset needs to build its pipelines.
@@ -52,7 +55,8 @@ impl Preset {
         let body = std::fs::read_to_string(&spec.composite_path)
             .with_context(|| format!("read composite shader {}", spec.composite_path.display()))?;
         let file = spec.composite_path.display().to_string();
-        let shader = compile_composite_shader(device, &body, &spec.name, &file)?;
+        let accessor = wgsl_accessor(&spec.params);
+        let shader = compile_composite_shader(device, &accessor, &body, &spec.name, &file)?;
         let pipeline = build_composite_pipeline(device, &layouts.composite, &shader, &spec.name)?;
 
         let warp_pipeline = match &spec.warp_path {
@@ -61,18 +65,20 @@ impl Preset {
                 let body = std::fs::read_to_string(path)
                     .with_context(|| format!("read warp shader {}", path.display()))?;
                 let file = path.display().to_string();
-                Some(build_warp_pipeline(device, &layouts.warp, &body, &spec.name, &file)?)
+                Some(build_warp_pipeline(device, &layouts.warp, &accessor, &body, &spec.name, &file)?)
             }
         };
 
-        let (palette_buf, palette_bg) =
-            make_palette_resources(device, &layouts.composite, &spec.palette, &spec.name);
+        let (uniform_buf, palette_bg) =
+            make_palette_resources(device, &layouts.composite, &PresetUniforms::new(&spec.palette), &spec.name);
+        let params = ParamState::new(spec.params.len());
         Ok(Self {
             spec,
             pipeline,
             warp_pipeline,
-            _palette_buf: palette_buf,
+            uniform_buf,
             palette_bg,
+            params,
         })
     }
 
@@ -547,9 +553,26 @@ impl PresetLibrary {
         }
     }
 
+    /// Advance the on-screen presets' `[params]` and upload them. Call once
+    /// per frame, before `frame_plan`.
+    pub fn tick_params(&mut self, queue: &wgpu::Queue, features: &AudioFeatures) {
+        let active: ArrayVec<usize, 2> = match self.state {
+            PresetState::Stable { current } => [current].into_iter().collect(),
+            PresetState::Transitioning { from, to, .. } => [from, to].into_iter().collect(),
+        };
+        for idx in active {
+            let p = &mut self.presets[idx];
+            if p.spec.params.is_empty() {
+                continue;
+            }
+            p.params.tick(&p.spec.params, features);
+            let offset = std::mem::offset_of!(PresetUniforms, params) as u64;
+            queue.write_buffer(&p.uniform_buf, offset, bytemuck::cast_slice(&p.params.packed()));
+        }
+    }
+
     /// Produce the render work for this frame.
     pub fn frame_plan(&self, features: &AudioFeatures) -> FramePlan<'_> {
-        let ctx = EvalContext::new(features);
         let (active, transition): (ArrayVec<(usize, f32), 2>, _) = match self.state {
             PresetState::Stable { current } => ([(current, 1.0)].into_iter().collect(), None),
             PresetState::Transitioning {
@@ -578,6 +601,7 @@ impl PresetLibrary {
         let mut particles: Option<(ParticleParams, f32, &wgpu::BindGroup)> = None;
         for (i, &(idx, weight)) in active.iter().enumerate() {
             let p = &self.presets[idx];
+            let ctx = EvalContext::with_params(features, p.params.values());
             let mut params = p.spec.mapping.eval(&ctx, p.spec.edge);
             // Zoom style: the outgoing preset's feedback accelerates away.
             if i == 0 && matches!(transition, Some(TransitionMask { style: TransitionStyle::Zoom, .. })) {

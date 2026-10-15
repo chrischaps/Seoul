@@ -32,8 +32,12 @@ struct AudioFeatures {
     waveform: array<f32, 512>,
 };
 
+// A preset's uniform buffer. Layout must match
+// `src/preset/preset.rs::PresetUniforms`. `params` holds the preset's
+// [params] values; read them by name through the generated `params()`.
 struct Palette {
     colors: array<vec4<f32>, 4>,
+    params: array<vec4<f32>, 4>,
 };
 
 const TAU: f32 = 6.2831853;

@@ -13,14 +13,16 @@
 use anyhow::{Result, anyhow};
 use wgpu::util::DeviceExt;
 
-use crate::preset::Palette;
+use crate::preset::PresetUniforms;
 use crate::render::feedback::FEEDBACK_FORMAT;
 use crate::render::mask::MASKED_BLEND;
 
-/// common.wgsl + composite_prelude.wgsl: prepended to every preset's
-/// composite shader.
+/// common.wgsl + fractal.wgsl + composite_prelude.wgsl: prepended to every
+/// preset's composite shader.
 pub const COMPOSITE_PRELUDE: &str = concat!(
     include_str!("../../shaders/common.wgsl"),
+    "\n",
+    include_str!("../../shaders/fractal.wgsl"),
     "\n",
     include_str!("../../shaders/composite_prelude.wgsl"),
 );
@@ -69,12 +71,11 @@ impl CompositeLayouts {
     }
 }
 
-/// Create a palette uniform buffer initialized to a given Palette,
-/// plus its bind group.
+/// Create a preset's uniform buffer (palette + params), plus its bind group.
 pub fn make_palette_resources(
     device: &wgpu::Device,
     layouts: &CompositeLayouts,
-    palette: &Palette,
+    palette: &PresetUniforms,
     label_hint: &str,
 ) -> (wgpu::Buffer, wgpu::BindGroup) {
     let buf_label = format!("seoul.preset.palette.{label_hint}");
@@ -95,18 +96,24 @@ pub fn make_palette_resources(
     (buf, bg)
 }
 
-/// Prepend `prelude` to an author's WGSL `body` and compile it. `file` names
-/// the author's file in error messages.
+/// Prepend `prelude` (plus a preset's generated `extra` prelude, such as its
+/// `params()` accessor) to an author's WGSL `body` and compile it. `file`
+/// names the author's file in error messages.
 pub fn compile_wgsl(
     device: &wgpu::Device,
     prelude: &str,
+    extra: &str,
     body: &str,
     label: &str,
     file: &str,
 ) -> Result<wgpu::ShaderModule> {
-    let mut combined = String::with_capacity(prelude.len() + body.len() + 1);
+    let mut combined = String::with_capacity(prelude.len() + extra.len() + body.len() + 2);
     combined.push_str(prelude);
     combined.push('\n');
+    if !extra.is_empty() {
+        combined.push_str(extra.trim_end_matches('\n'));
+        combined.push('\n');
+    }
     let body_offset = combined.matches('\n').count();
     combined.push_str(body);
 
@@ -124,6 +131,7 @@ pub fn compile_wgsl(
 /// Read a preset's WGSL fragment, prepend the composite prelude, and compile.
 pub fn compile_composite_shader(
     device: &wgpu::Device,
+    extra_prelude: &str,
     body_source: &str,
     label_hint: &str,
     file: &str,
@@ -131,6 +139,7 @@ pub fn compile_composite_shader(
     compile_wgsl(
         device,
         COMPOSITE_PRELUDE,
+        extra_prelude,
         body_source,
         &format!("seoul.composite.shader.{label_hint}"),
         file,

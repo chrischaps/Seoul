@@ -41,6 +41,11 @@ author = "seoul"
 description = "One sentence for the toast."
 edge = "mirror"                    # mirror (default) | fade | clamp
 
+[params]                           # optional; named values for your shaders
+spin  = "time * 0.1"                              # plain expression
+lean  = { follow = "bass * 0.3", tau = 0.4 }      # eases toward it (τ in s)
+depth = { rate = "0.05 + bass_att", wrap = 1.0 }  # integrates per second
+
 [mapping]                          # expressions, evaluated every frame
 zoom        = "1.0 + bass * 0.02"  # required; >1 drifts outward
 rotation    = "0.003"              # required; radians per frame
@@ -115,6 +120,34 @@ Arithmetic `+ - * /`, parentheses, unary minus, and:
 - **Functions** (WGSL semantics): `sin cos tan abs sqrt exp log floor fract
   sign pow min max atan2 step clamp mix smoothstep`.
 
+### `[params]`
+
+Up to 16 named values, evaluated every frame in file order, for anything
+your shaders need that `u` doesn't give you: a fractal constant, a zoom
+depth, a smoothed copy of a band. Three kinds:
+
+- **`"expr"`** (or a number): the expression's value.
+- **`{ follow = "expr", tau = 0.25 }`**: eases toward the expression with
+  time constant `tau` seconds. Starts at its target, so nothing fades in
+  from zero. Use it to make audio-driven shapes glide instead of twitch.
+- **`{ rate = "expr", wrap = 1.0 }`**: adds up the expression over time
+  (units per second), so speed can follow the music without the position
+  jumping. `wrap` keeps it in `0..wrap` for seamless loops (`6.2831853` for
+  an angle).
+
+A param can use any param declared above it, and `[mapping]` and `[post]`
+can use all of them. Names are lowercase identifiers that aren't a built-in
+variable, function or WGSL keyword. `follow` and `rate` are per second, so
+they behave the same at any refresh rate. Values reset when the preset
+reloads.
+
+In WGSL, `params()` returns a struct with one `f32` field per param:
+
+```wgsl
+let q = params();
+let c = vec2<f32>(q.cx, q.cy);
+```
+
 ## The composite shader
 
 Write only `fs_composite`. Everything below is already declared; do not
@@ -145,6 +178,48 @@ and helpers:
 | `hue_rotate(c, a)`, `luma(c)` | color utilities |
 | `rand2(p)`, `vnoise(p)`, `fbm(p)` | hash, value noise, 4-octave fractal noise |
 | `curl_noise(p)` | divergence-free 2D flow |
+| `params()` | this preset's `[params]` (if it declares any) |
+
+### Fractal helpers
+
+Complex numbers are `vec2<f32>` (x real, y imaginary).
+
+| Helper | |
+|---|---|
+| `cmul cdiv csq csqrt conj cabs2 cexp clog cpow(z, n)` | complex arithmetic |
+| `julia_beta(c)` | the repelling fixed point of z² + c (on the Julia set; multiplier 2z) |
+| `disk_move(z, a)` | Möbius move of the unit disk taking 0 to `a` (hyperbolic glide) |
+| `rot2(a)` | 2×2 rotation matrix |
+| `fold_plane(p, n)`, `circle_invert(p, c, r)` | folds and inversions |
+| `segment_dist(p, a, b)` | distance to a segment (for fold-built trees) |
+| `julia(z0, c, max_iter, trap_r)` | escape time → `(smooth count, ring trap, escaped, min \|z\|)` |
+| `kali(p, c, iters)` | Kali set → `(accumulated \|p\| change, min \|p\|)` |
+| `cosine_palette(t, phase)` | seamless cycling through the palette |
+
+`presets/julia_bloom.wgsl` (escape time), `presets/indras_pearls.wgsl`
+(circle inversions), `presets/kali_nebula.wgsl` and `presets/sonamu.wgsl`
+(a fold-built tree) are worked examples.
+
+### Endless dives
+
+f32 runs out of precision after a few thousand × of zoom, but a
+self-similar fractal never needs more than one level of it. Zoom by exactly
+the fractal's own scale factor while a `rate` param with `wrap = 1.0` runs
+from 0 to 1, and the frame at 1 matches the frame at 0:
+
+- **IFS:** view the system through `f_k^(−dive)`, a fractional power of one
+  map (`presets/hutchinson_warp.wgsl`).
+- **Julia sets:** zoom on the repelling fixed point by its multiplier λ.
+  Starting a few iterations early (`z* + u·λ^−N`, then N steps of z² + c)
+  makes the self-similarity exact, and `count − dive` keeps the colors
+  continuous across the wrap (`presets/julia_bloom.wgsl`).
+- **Anything else:** crossfade a few zooming copies a fraction of a cycle
+  apart with sin² weights (`presets/kali_nebula.wgsl`), or move objects
+  through a perspective divide (`presets/sonamu.wgsl`).
+
+A feedback warp built from an expanding map (z² + c) can't zoom in: near
+the set it samples outside the zoomed window. Use the `[post]` video echo
+for depth there instead.
 
 ## A custom warp
 
@@ -169,6 +244,13 @@ Here `in.uv` is **texture space (y down)**. The warp prelude provides:
 frame-rate normalized), `u`, `palette`, and all the common helpers. See
 `presets/ink_warp.wgsl` (fluid advection) and `presets/han_river_warp.wgsl`
 (water reflection) for complete examples.
+
+A warp can also *be* the fractal. Gather last frame through a few
+contracting maps and keep the brightest, and the feedback loop runs an
+iterated function system, converging onto its attractor
+(`presets/hutchinson_warp.wgsl`). Sample last frame at `z² + c` and it runs
+the Julia iteration, one step per frame (`presets/julia_feedback_warp.wgsl`).
+Both need `edge = "fade"` so light that leaves the screen is gone.
 
 ## Transitions come for free
 

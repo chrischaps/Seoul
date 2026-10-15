@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::preset::shader::compile_wgsl;
+use crate::preset::{Palette, PresetUniforms};
 use crate::render::feedback::FEEDBACK_FORMAT;
 use crate::render::gpu;
 use crate::render::mask::{MASKED_BLEND, MaskPass, MaskSlot};
@@ -152,9 +153,11 @@ pub struct WarpUniforms {
 
 const _: () = assert!(std::mem::size_of::<WarpUniforms>() == 80);
 
-/// common.wgsl + warp_prelude.wgsl: prepended to every warp shader.
+/// common.wgsl + fractal.wgsl + warp_prelude.wgsl: prepended to every warp shader.
 pub const WARP_PRELUDE: &str = concat!(
     include_str!("../../shaders/common.wgsl"),
+    "\n",
+    include_str!("../../shaders/fractal.wgsl"),
     "\n",
     include_str!("../../shaders/warp_prelude.wgsl"),
 );
@@ -199,11 +202,19 @@ impl WarpLayouts {
 pub fn build_warp_pipeline(
     device: &wgpu::Device,
     layouts: &WarpLayouts,
+    extra_prelude: &str,
     body: &str,
     label: &str,
     file: &str,
 ) -> Result<wgpu::RenderPipeline> {
-    let module = compile_wgsl(device, WARP_PRELUDE, body, &format!("seoul.warp.shader.{label}"), file)?;
+    let module = compile_wgsl(
+        device,
+        WARP_PRELUDE,
+        extra_prelude,
+        body,
+        &format!("seoul.warp.shader.{label}"),
+        file,
+    )?;
     // Each warp draw adds `mask × warped image` into a cleared target, so a
     // transition can crossfade (or dissolve, wipe…) two presets' feedback
     // dynamics.
@@ -270,7 +281,7 @@ pub struct WarpPass {
 impl WarpPass {
     pub fn new(device: &wgpu::Device, feedback_views: &[wgpu::TextureView; 2], layouts: WarpLayouts) -> Result<Self> {
         let sampler = gpu::linear_clamp_sampler(device, "seoul.warp.sampler");
-        let default_pipeline = build_warp_pipeline(device, &layouts, DEFAULT_WARP, "builtin", "shaders/warp_default.wgsl")?;
+        let default_pipeline = build_warp_pipeline(device, &layouts, "", DEFAULT_WARP, "builtin", "shaders/warp_default.wgsl")?;
 
         let slot = |label: &str, u: WarpUniforms| {
             let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -300,7 +311,7 @@ impl WarpPass {
         // The resample path has no preset, but the layout still wants a palette.
         let neutral_palette = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("seoul.warp.neutral_palette"),
-            contents: &[0u8; 64],
+            contents: bytemuck::bytes_of(&PresetUniforms::new(&Palette::neutral())),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let neutral_palette_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {

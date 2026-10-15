@@ -15,6 +15,7 @@ use bytemuck::{Pod, Zeroable};
 use serde::Deserialize;
 
 use crate::preset::expr::{self, EvalContext, Expr};
+use crate::preset::params::{self, MAX_PARAMS, ParamSpec};
 use crate::render::particles::{ColorMode, ParticleParams, SpawnShape};
 use crate::render::post::{EchoOrient, Mirror, PostParams};
 use crate::render::warp::{EdgeMode, WarpParams};
@@ -30,6 +31,10 @@ struct RawPreset {
     /// Feedback edge policy: "mirror" (default), "fade" or "clamp".
     #[serde(default)]
     edge: Option<String>,
+    /// Named per-frame values for the shaders (see `params.rs`). Kept as a
+    /// raw table so declaration order survives.
+    #[serde(default)]
+    params: Option<toml::Table>,
     mapping: RawMapping,
     shader: RawShader,
     #[serde(default)]
@@ -183,6 +188,7 @@ pub struct PresetSpec {
     pub mapping: WarpMapping,
     pub edge: EdgeMode,
     pub palette: Palette,
+    pub params: Vec<ParamSpec>,
     pub post: PostMapping,
     pub particles: Option<ParticleParams>,
 }
@@ -235,6 +241,26 @@ pub struct Palette {
     pub colors: [[f32; 4]; 4],
 }
 
+/// A preset's uniform buffer: its palette plus its `[params]` values.
+/// Layout must match `Palette` in `shaders/common.wgsl`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct PresetUniforms {
+    pub colors: [[f32; 4]; 4],
+    pub params: [[f32; 4]; MAX_PARAMS / 4],
+}
+
+const _: () = assert!(std::mem::size_of::<PresetUniforms>() == 128);
+
+impl PresetUniforms {
+    pub fn new(palette: &Palette) -> Self {
+        Self {
+            colors: palette.colors,
+            params: [[0.0; 4]; MAX_PARAMS / 4],
+        }
+    }
+}
+
 impl Palette {
     pub fn neutral() -> Self {
         // Soft monochrome fallback when no palette is declared
@@ -261,8 +287,14 @@ impl PresetSpec {
             .with_context(|| format!("parse TOML in {}", toml_path.display()))?;
         let name = raw.name.clone();
 
+        let param_specs = match &raw.params {
+            Some(t) => params::parse_params(&name, t)?,
+            None => Vec::new(),
+        };
+        let scope: Vec<&str> = param_specs.iter().map(|p| p.name.as_str()).collect();
+
         let parse = |field: &str, src: &str| -> Result<Expr> {
-            expr::parse(src).map_err(|e| {
+            expr::parse_with(src, &scope).map_err(|e| {
                 anyhow!("preset '{name}' field '{field}' expression error: {e} — source: '{src}'")
             })
         };
@@ -359,6 +391,7 @@ impl PresetSpec {
             mapping,
             edge,
             palette,
+            params: param_specs,
             post,
             particles,
         })
@@ -512,6 +545,25 @@ color3 = [1.0, 1.0, 1.0, 1.0]
         assert_eq!(idx.particles.unwrap().color, ColorMode::Palette(2));
         assert!(parse(&format!("{MIN}\n[particles]\ncolor = 7\n")).is_err());
         assert!(parse(&format!("{MIN}\n[particles]\nspawn = \"donut\"\n")).is_err());
+    }
+
+    #[test]
+    fn params_are_in_scope_for_mapping_and_post() {
+        let src = MIN.replace("zoom = \"1.0 + bass * 0.05\"", "zoom = \"1.0 + depth\"")
+            + r#"
+[params]
+depth = { rate = "0.1", wrap = 1 }
+glow = "depth * 2"
+[post]
+bloom = "glow"
+"#;
+        let spec = parse(&src).unwrap();
+        assert_eq!(spec.params.len(), 2);
+        let f = AudioFeatures::default();
+        let ctx = EvalContext::with_params(&f, &[0.25, 0.5]);
+        assert_eq!(spec.mapping.eval(&ctx, spec.edge).zoom, 1.25);
+        assert_eq!(spec.post.apply(&PostParams::default(), &ctx).bloom, 0.5);
+        assert!(parse(&format!("{MIN}[params]\nbass = \"1\"\n")).is_err());
     }
 
     #[test]

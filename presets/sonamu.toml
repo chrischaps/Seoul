@@ -1,0 +1,54 @@
+name = "Sonamu"
+author = "seoul"
+description = "소나무: a night walk through Korean red pines under the moon, each grown by folding one branch into many."
+edge = "fade"
+
+# The pine is one branch, repeated: move to the tip, mirror, turn, shrink,
+# nine times over. `spread` opens the crown with the bass; `wind` (mid)
+# bends every level a little more than the one below, so the tips sway
+# most. The warp lifts and diffuses whatever is drawn, like ink in water,
+# and a slight zoom from the horizon streams it past as you walk.
+[params]
+spread = { follow = "0.36 + bass_att * 0.08", tau = 0.6 }
+wind   = { follow = "0.02 + mid * 0.06", tau = 0.5 }
+bend   = "0.04 + wind * sin(time * 1.1)"
+glow   = { follow = "volume", tau = 0.4 }
+# The walk: one unit passes one tree. Bass quickens the pace.
+walk   = { rate = "0.06 + bass_att * 0.08 + beat * 0.03" }
+
+[mapping]
+zoom        = "1.002 + bass_att * 0.002"
+cy          = "0.58"
+rotation    = "0.0"
+warp_amount = "0.0"
+decay       = "0.86"
+blur        = "0.0"
+
+[shader]
+composite = "sonamu.wgsl"
+warp      = "sonamu_warp.wgsl"
+
+[palette]
+color0 = [0.02, 0.025, 0.03, 1.0]  # night ink
+color1 = [0.72, 0.75, 0.80, 1.0]   # pale ink
+color2 = [0.22, 0.62, 0.42, 1.0]   # pine jade
+color3 = [0.98, 0.93, 0.80, 1.0]   # moon
+
+[post]
+bloom      = 0.45
+vignette   = 0.5
+grain      = 0.3
+saturation = 0.95
+
+[particles]
+count      = 700
+spawn      = "random"
+speed      = 0.015
+flow       = 0.6
+flow_scale = 2.0
+drag       = 1.0
+size       = 2.0
+life       = 5.0
+color      = 2
+burst      = 0.12
+intensity  = 0.03

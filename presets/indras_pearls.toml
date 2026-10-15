@@ -1,0 +1,43 @@
+name = "Indra's Pearls"
+author = "seoul"
+description = "Indra's net from Hwaeom Buddhism: every pearl reflects every other, in a hyperbolic disk of mirrors."
+
+# Five mirror-circles meet the unit circle at right angles; reflecting in
+# them over and over tiles the Poincaré disk, with the tiles shrinking into
+# a necklace of pearls at the rim. `open` sets the circles' size: at 1 they
+# touch (an ideal-pentagon tiling); below 1, gaps open and the rim breaks
+# into dust. The view glides through the hyperbolic plane, and dives with
+# the bass toward the rim, where the pearls crowd smaller and smaller.
+[params]
+open  = { follow = "0.90 + bass_att * 0.08 + beat * 0.02", tau = 0.25 }
+spin  = { rate = "0.02 + mid_att * 0.03", wrap = 6.2831853 }
+orbit = { rate = "0.05 + bass_att * 0.08", wrap = 6.2831853 }
+reach = { follow = "0.22 + mid_att * 0.25", tau = 1.2 }
+ax    = "reach * cos(orbit)"
+ay    = "reach * sin(orbit)"
+shine = { follow = "treble", tau = 0.1 }
+# Bass draws the view down toward the rim (up to ~12×) and quiet lets it
+# float back out; `aim` slowly picks which stretch of the necklace.
+dive  = { follow = "bass_att * 2.0 + beat * 0.5", tau = 1.4 }
+aim   = { rate = "0.04", wrap = 6.2831853 }
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0"
+warp_amount = "0"
+decay       = "0.80"
+
+[shader]
+composite = "indras_pearls.wgsl"
+
+[palette]
+color0 = [0.02, 0.02, 0.05, 1.0]   # obsidian
+color1 = [0.18, 0.62, 0.70, 1.0]   # celadon
+color2 = [0.95, 0.78, 0.45, 1.0]   # pale gold
+color3 = [0.95, 0.93, 0.98, 1.0]   # pearl
+
+[post]
+bloom      = 0.7
+bloom_threshold = 0.3
+vignette   = 0.4
+grain      = 0.06

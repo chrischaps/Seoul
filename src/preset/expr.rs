@@ -8,7 +8,8 @@
 //!   arglist  = expr (',' expr)*
 //!
 //! Variables: bass, mid, treble, bass_att, mid_att, treble_att, volume, beat,
-//!            time, dt, frame, bpm, beat_phase, beat_count, aspect
+//!            time, dt, frame, bpm, beat_phase, beat_count, aspect, plus any
+//!            preset `[params]` declared earlier (see `parse_with`)
 //! Functions: sin, cos, tan, abs, sqrt, exp, log, floor, fract, sign,
 //!            pow(x,y), min(a,b), max(a,b), atan2(y,x), step(edge,x),
 //!            clamp(x,lo,hi), mix(a,b,t), smoothstep(e0,e1,x)
@@ -23,6 +24,8 @@ use crate::audio::AudioFeatures;
 pub enum Expr {
     Lit(f32),
     Var(VarKind),
+    /// A preset `[params]` value, by index into `EvalContext::params`.
+    Param(u8),
     Neg(Box<Expr>),
     BinOp(Op, Box<Expr>, Box<Expr>),
     Call(Func, Vec<Expr>),
@@ -112,11 +115,18 @@ impl std::error::Error for ParseError {}
 
 pub struct EvalContext<'a> {
     pub features: &'a AudioFeatures,
+    /// Current values of the preset's `[params]`, in declaration order.
+    pub params: &'a [f32],
 }
 
 impl<'a> EvalContext<'a> {
+    #[cfg(test)]
     pub fn new(features: &'a AudioFeatures) -> Self {
-        Self { features }
+        Self { features, params: &[] }
+    }
+
+    pub fn with_params(features: &'a AudioFeatures, params: &'a [f32]) -> Self {
+        Self { features, params }
     }
 }
 
@@ -141,6 +151,7 @@ impl Expr {
                 VarKind::BeatCount => ctx.features.beat_count,
                 VarKind::Aspect => ctx.features.aspect,
             },
+            Expr::Param(i) => ctx.params.get(*i as usize).copied().unwrap_or(0.0),
             Expr::Neg(e) => -e.eval(ctx),
             Expr::BinOp(op, a, b) => {
                 let av = a.eval(ctx);
@@ -201,8 +212,16 @@ impl Expr {
     }
 }
 
+#[cfg(test)]
 pub fn parse(src: &str) -> Result<Expr, ParseError> {
-    let mut p = Parser::new(src);
+    parse_with(src, &[])
+}
+
+/// Parse with named preset params in scope; `params[i]` becomes `Expr::Param(i)`.
+/// Built-in variables win over a param of the same name, but presets reject
+/// such names at load time anyway.
+pub fn parse_with(src: &str, params: &[&str]) -> Result<Expr, ParseError> {
+    let mut p = Parser::new(src, params);
     let e = p.parse_expr()?;
     p.skip_ws();
     if p.pos < p.bytes.len() {
@@ -215,14 +234,16 @@ struct Parser<'a> {
     bytes: &'a [u8],
     src: &'a str,
     pos: usize,
+    params: &'a [&'a str],
 }
 
 impl<'a> Parser<'a> {
-    fn new(src: &'a str) -> Self {
+    fn new(src: &'a str, params: &'a [&'a str]) -> Self {
         Self {
             bytes: src.as_bytes(),
             src,
             pos: 0,
+            params,
         }
     }
 
@@ -388,14 +409,22 @@ impl<'a> Parser<'a> {
                 });
             }
             Ok(Expr::Call(func, args))
+        } else if let Some(v) = lookup_var(name) {
+            Ok(Expr::Var(v))
+        } else if let Some(i) = self.params.iter().position(|p| *p == name) {
+            Ok(Expr::Param(i as u8))
         } else {
-            let v = lookup_var(name).ok_or_else(|| ParseError {
+            Err(ParseError {
                 message: format!("unknown variable '{name}'"),
                 pos: start,
-            })?;
-            Ok(Expr::Var(v))
+            })
         }
     }
+}
+
+/// True if `name` is a built-in expression variable or function.
+pub fn is_builtin(name: &str) -> bool {
+    lookup_var(name).is_some() || lookup_func(name).is_some()
 }
 
 fn lookup_var(name: &str) -> Option<VarKind> {
@@ -586,6 +615,15 @@ mod tests {
     fn unbalanced_parens_errors() {
         assert!(parse("(1 + 2").is_err());
         assert!(parse("1 + 2)").is_err());
+    }
+
+    #[test]
+    fn params_resolve_by_name() {
+        let f = ctx_with(0.5, 0.0, 0.0, 0.0, 0.0);
+        let e = parse_with("depth * 2 + bass", &["cx", "depth"]).unwrap();
+        assert_eq!(e.eval(&EvalContext::with_params(&f, &[0.0, 3.0])), 6.5);
+        assert!(parse("depth").is_err());
+        assert!(parse_with("other", &["depth"]).is_err());
     }
 
     #[test]

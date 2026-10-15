@@ -204,6 +204,7 @@ impl Renderer {
         self.library.poll_reloads(&ctx.device);
 
         self.library.tick(&f, dt);
+        self.library.tick_params(&ctx.queue, &f);
         let plan = self.library.frame_plan(&f);
 
         ctx.queue.write_buffer(&self.audio_buf, 0, bytemuck::bytes_of(&f));

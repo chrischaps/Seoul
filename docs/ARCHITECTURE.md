@@ -203,6 +203,24 @@ Bind group layouts are shared: `audio` (storage, all stages) and `palette`
 composite (`[audio, palette]`), warp (`[prev+sampler, warp uniforms,
 audio, palette]`) and particle pipelines.
 
+Preludes are `common.wgsl` + `fractal.wgsl` (complex math, escape time,
+folds, inversions) + the stage prelude, plus a per-preset generated snippet.
+
+**`[params]`** (`preset/params.rs`): up to 16 named per-frame values,
+parsed from a raw `toml::Table` (`toml`'s `preserve_order` keeps file
+order). Each is a plain expression, a `follow` (exponential approach, τ in
+seconds) or a `rate` (integrated per second, optional `wrap`); per-second
+units make them frame-rate independent, and steps are capped at 0.1 s so a
+stall can't fling an integrator. Expressions see earlier params as
+`Expr::Param(i)` (`expr::parse_with`). Live values (`ParamState`) sit on
+the `Preset` and reset on rebuild. `PresetLibrary::tick_params` advances
+the on-screen presets once per frame (before `frame_plan`, which evaluates
+`[mapping]` and `[post]` with the values in scope) and writes them into the
+preset's uniform buffer, which is the palette buffer extended to
+`PresetUniforms { colors, params }` (128 B). Shaders read them through a
+generated `struct Params` + `fn params()` appended to the prelude, before
+the author's body, so error line remapping is unaffected.
+
 ## Hot reload
 
 `preset/watcher.rs` (notify, recursive) forwards create/modify/remove events
@@ -257,7 +275,8 @@ the HUD (the post and HUD passes are re-run offscreen for the last frame).
 
 - `AudioFeatures` (Rust) ⇔ `shaders/common.wgsl` field for field.
 - `WarpUniforms` (80 B), `PostUniforms` (80 B), `ParticleUniforms` (96 B),
-  mask uniforms (32 B): Rust structs ⇔ WGSL structs, guarded by size asserts.
+  mask uniforms (32 B), `PresetUniforms` (128 B, WGSL `Palette`): Rust
+  structs ⇔ WGSL structs, guarded by size asserts.
 - Everything drawn into the feedback that should respect transitions
   (warp, composite) uses `MASKED_BLEND` + `ColorWrites::COLOR`; nothing
   else may write feedback alpha except the mask pass.
