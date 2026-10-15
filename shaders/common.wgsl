@@ -43,6 +43,16 @@ struct AudioFeatures {
     hat_count: f32,
     pad4: f32,
 
+    // Soba link lanes (docs/LINK.md); 0 (ages 1000) while no link is live.
+    cv: array<f32, 8>,
+    gate: array<f32, 4>,
+    gate_age: array<f32, 4>,
+    gate_count: array<f32, 4>,
+    link_live: f32,
+    playing: f32,
+    bar: f32,
+    pad5: f32,
+
     spectrum: array<f32, 64>,
     waveform: array<f32, 512>,
 };

@@ -36,3 +36,11 @@ duration = 3.0
 enabled = true
 stats = false          # F1 toggles live
 toast_seconds = 3.0
+
+[link]
+# Listen for a Soba patch (or any OSC sender) on 127.0.0.1. See docs/LINK.md.
+enabled = true
+port = 9137
+# Loopback audio reaches Seoul later than link messages. Delay the link by
+# this much so a gate flash lands with the kick you hear. Tune by ear (0–1000).
+delay_ms = 0

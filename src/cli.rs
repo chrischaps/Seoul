@@ -30,6 +30,9 @@ OPTIONS:
                             into screenshots/tour/, then exit. With --preset,
                             only presets whose name contains it.
     --tour-shots <N>        Screenshots per preset during a tour (default 1)
+    --no-link               Don't listen for a Soba link (docs/LINK.md); with
+                            --synth, also skip its stand-in Soba
+    --link-port <PORT>      Listen for the Soba link on this port (default 9137)
     -h, --help              Show this help
 ";
 
@@ -51,6 +54,8 @@ pub struct Args {
     pub record_seconds: Option<f32>,
     pub record_fps: Option<f32>,
     pub record_hud: bool,
+    pub no_link: bool,
+    pub link_port: Option<u16>,
 }
 
 impl Args {
@@ -68,6 +73,8 @@ impl Args {
                 "--synth" => args.synth = true,
                 "--record-hud" => args.record_hud = true,
                 "--fullscreen" => args.fullscreen = true,
+                "--no-link" => args.no_link = true,
+                "--link-port" => args.link_port = Some(value("--link-port")?.parse()?),
                 "--preset" => args.preset = Some(value("--preset")?),
                 "--config" => args.config = Some(value("--config")?),
                 "--auto" => args.auto = Some(num(&value("--auto")?)?),
@@ -130,6 +137,9 @@ mod tests {
         assert_eq!(r.record.as_deref(), Some("out"));
         assert_eq!(r.record_seconds, Some(12.0));
         assert_eq!(r.sequence.unwrap(), vec!["Ink".to_owned(), "Han%River".to_owned()]);
+        let l = parse("--no-link --link-port 9200").unwrap().unwrap();
+        assert!(l.no_link);
+        assert_eq!(l.link_port, Some(9200));
     }
 
     #[test]

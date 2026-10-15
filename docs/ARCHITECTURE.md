@@ -30,6 +30,9 @@ invariants that keep it all consistent. For writing presets, see
  (cpal, realtime)                     (Analyzer, ~5.8 ms hop)            (winit loop, wgpu)
         ▲                                     ▲
         └──── LoopbackCapture (main thread) ──┘  sends a new ring on (re)connect
+
+ Soba (OSC/UDP 127.0.0.1:9137) ──▶ link thread ──snapshots (mpsc)──▶ render thread
+                                   (LinkState, gate edges)         (merged after `delay_ms`)
 ```
 
 - **Audio callback** (`audio/capture.rs`): downmixes any sample format
@@ -42,6 +45,16 @@ invariants that keep it all consistent. For writing presets, see
 - **Render thread** (`main.rs`, `render/`): owns the window, polls capture,
   reads the latest features, renders. `--synth` replaces loopback with a
   generator thread (`audio/synth.rs`) feeding the same channel.
+- **Link thread** (`audio/link.rs`): receives the Soba link's OSC on
+  `127.0.0.1`, folds messages into a `LinkState` (counting gate rising
+  edges at the full 200 Hz) and sends a timestamped snapshot per packet.
+  The render thread keeps ~2 s of them and merges the one from
+  `[link] delay_ms` ago into its copy of the features, right after reading
+  them. The merge happens there, not in analysis, because `delay_ms` must
+  be measured on the presenting clock and `--record` runs analysis on the
+  render thread. A live, playing link overrides `bpm`, `beat_phase`,
+  `beat_count`, `bar` and `bpm_confidence`. Protocol and semantics are in
+  `docs/LINK.md`.
 
 ## Audio capture
 
@@ -90,9 +103,11 @@ and per-band balance.
 
 ## `AudioFeatures`: CPU snapshot and GPU layout
 
-`AudioFeatures` (`audio/features.rs`) is `#[repr(C)] Pod`: a 32-scalar header
+`AudioFeatures` (`audio/features.rs`) is `#[repr(C)] Pod`: a 56-scalar header
 (including `resolution: vec2` on a 16-byte boundary, then rows of drum
-envelopes, ages and counts, each padded to a vec4), then
+envelopes, ages and counts, each padded to a vec4, then the link's
+`cv[8]`, `gate[4]`, `gate_age[4]`, `gate_count[4]` and a
+`link_live, playing, bar` row), then
 `spectrum[64]` and `waveform[512]`. It is uploaded verbatim to a storage
 buffer bound by every composite, warp and particle pipeline. The WGSL
 mirror lives in **`shaders/common.wgsl`** and must match field for field; a
@@ -278,7 +293,9 @@ the HUD (the post and HUD passes are re-run offscreen for the last frame).
 ## Verification tooling
 
 - `--synth`: deterministic 124 BPM test track (kick, clap, hats, ducked
-  bass, pad, arpeggio, kick-less breakdown every eighth bar).
+  bass, pad, arpeggio, kick-less breakdown every eighth bar), plus a
+  stand-in Soba link playing along over real UDP (`audio/link_fake.rs`;
+  `--no-link` skips it). `--record` folds the same lanes in directly.
 - `--tour SECS [--tour-shots N] [--preset filter]`: hard-cut through
   presets, screenshot each into `screenshots/tour/`, exit. The HUD is
   disabled for clean frames.
@@ -295,3 +312,5 @@ the HUD (the post and HUD passes are re-run offscreen for the last frame).
   else may write feedback alpha except the mask pass.
 - Per-frame quantities authored at 60 Hz must go through `k = dt·60`.
 - Anything new compiled from user files goes inside an error scope.
+- Link values join `AudioFeatures` on the render thread only, and every
+  link field has a defined "no link" value (lanes 0, gate ages 1000).

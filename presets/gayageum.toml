@@ -1,0 +1,33 @@
+name = "Gayageum"
+author = "seoul"
+description = "A twelve-string gayageum played by a Soba patch: each control lane bends a string at its bridge, each gate plucks one. Without a link, the music plays it."
+edge = "clamp"
+
+# Link preset (docs/LINK.md). Strings 1–8 follow cv1–cv8: the value slides
+# the string's bridge (anjok) and presses the string beside it. Strings
+# 9–12 ring when gate1–gate4 open. With no link, the spectrum stands in for
+# the CV lanes and kick, snare, hat and the beat pluck the four gate strings.
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+# Short trails, so a plucked string paints the envelope of its vibration.
+decay       = "0.62"
+blur        = "0.2"
+
+[shader]
+composite = "gayageum.wgsl"
+
+[palette]
+color0 = [0.05, 0.03, 0.06, 1.0]   # night lacquer
+color1 = [0.62, 0.36, 0.20, 1.0]   # paulownia
+color2 = [1.00, 0.88, 0.66, 1.0]   # raw silk
+color3 = [0.95, 0.30, 0.22, 1.0]   # vermilion cord
+
+[post]
+bloom           = 0.55
+bloom_threshold = 0.55
+vignette        = 0.45
+grain           = 0.18
+saturation      = 1.05

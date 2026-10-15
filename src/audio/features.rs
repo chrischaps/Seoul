@@ -8,7 +8,7 @@ pub const WAVEFORM_SAMPLES: usize = 512;
 /// This is both the CPU-side value the analysis thread publishes and the
 /// exact GPU storage-buffer layout bound at `@group(0) @binding(0)` in every
 /// preset shader. Field order and padding must match the `AudioFeatures`
-/// struct in `shaders/composite_prelude.wgsl` exactly — every scalar is f32
+/// struct in `shaders/common.wgsl` exactly — every scalar is f32
 /// and `resolution` sits on a 16-byte boundary so std430 and `repr(C)` agree.
 ///
 /// Audio fields are written by the analysis thread. Timing fields (`time`,
@@ -69,16 +69,34 @@ pub struct AudioFeatures {
     pub hat_count: f32,
     pub _pad4: f32,
 
+    // Soba link lanes (`audio/link.rs`, `docs/LINK.md`), merged on the render
+    // thread. All read 0 (ages 1000) while no link is live.
+    /// Control signals as Soba sends them: 0..1 unipolar or -1..1 bipolar.
+    pub cv: [f32; 8],
+    /// Gate states, exactly 0 or 1.
+    pub gate: [f32; 4],
+    /// Seconds since each gate's last rising edge (capped at 1000).
+    pub gate_age: [f32; 4],
+    /// Rising edges seen per gate since the link came up.
+    pub gate_count: [f32; 4],
+    /// 1 while link messages arrive (within 500 ms), else 0.
+    pub link_live: f32,
+    /// 1 while the linked patch's transport is playing.
+    pub playing: f32,
+    /// Bar count: Soba's while the link plays, else `floor(beat_count / 4)`.
+    pub bar: f32,
+    pub _pad5: f32,
+
     /// Log-spaced spectrum, 0..1, perceptually tilted.
     pub spectrum: [f32; SPECTRUM_BINS],
     /// Trigger-aligned, auto-gained waveform, roughly -1..1, ends tapered to 0.
     pub waveform: [f32; WAVEFORM_SAMPLES],
 }
 
-// Header (32 scalars) + spectrum + waveform. If this fails, the WGSL prelude
+// Header (56 scalars) + spectrum + waveform. If this fails, the WGSL prelude
 // is out of sync with the Rust struct.
 const _: () = assert!(
-    std::mem::size_of::<AudioFeatures>() == (32 + SPECTRUM_BINS + WAVEFORM_SAMPLES) * 4
+    std::mem::size_of::<AudioFeatures>() == (56 + SPECTRUM_BINS + WAVEFORM_SAMPLES) * 4
 );
 
 impl Default for AudioFeatures {
@@ -87,6 +105,7 @@ impl Default for AudioFeatures {
             bpm: 120.0,
             aspect: 16.0 / 9.0,
             resolution: [1280.0, 720.0],
+            gate_age: [1000.0; 4],
             ..Zeroable::zeroed()
         }
     }

@@ -47,6 +47,21 @@ pub fn spawn_synth(sink: Sender<AudioSource>) {
         .expect("spawn synth thread");
 }
 
+/// A stand-in Soba playing along with the track over real OSC, so the link's
+/// receiver, timeline and clock lock all run end to end (`audio/link_fake.rs`).
+pub fn spawn_fake_link(port: u16) {
+    info!(port, "stand-in Soba link running");
+    thread::Builder::new()
+        .name("seoul-fake-link".into())
+        .spawn(move || {
+            let version = format!("seoul synth {}", env!("CARGO_PKG_VERSION"));
+            if let Err(e) = super::link_fake::run(port, Instant::now(), &version) {
+                tracing::warn!("stand-in Soba link stopped: {e}");
+            }
+        })
+        .expect("spawn fake link thread");
+}
+
 /// The test track's generator. Public so `--record` can step it in lockstep
 /// with rendering instead of in real time.
 #[derive(Default)]

@@ -12,6 +12,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use tracing::{info, warn};
 
+use crate::audio::link::LinkSettings;
 use crate::preset::transition::TransitionStyle;
 use crate::render::post::PostParams;
 
@@ -31,6 +32,7 @@ pub struct Config {
     pub transition: TransitionConfig,
     pub post: PostDefaults,
     pub hud: HudConfig,
+    pub link: LinkConfig,
 }
 
 impl Default for Config {
@@ -44,6 +46,28 @@ impl Default for Config {
             transition: TransitionConfig::default(),
             post: PostDefaults::default(),
             hud: HudConfig::default(),
+            link: LinkConfig::default(),
+        }
+    }
+}
+
+/// The Soba link (`docs/LINK.md`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LinkConfig {
+    pub enabled: bool,
+    pub port: u16,
+    /// Delay link values to line up with later-arriving loopback audio.
+    pub delay_ms: f32,
+}
+
+impl Default for LinkConfig {
+    fn default() -> Self {
+        let d = LinkSettings::default();
+        Self {
+            enabled: d.enabled,
+            port: d.port,
+            delay_ms: d.delay_ms,
         }
     }
 }
@@ -266,6 +290,17 @@ mod tests {
     fn rejects_typos_and_bad_styles() {
         assert!(Config::parse("[auto]\nenabeld = true\n").is_err());
         assert!(Config::parse("[transition]\nstyle = \"sparkle\"\n").is_err());
+        assert!(Config::parse("[link]\nport = 70000\n").is_err());
+        assert!(Config::parse("[link]\nlink_delay_ms = 40\n").is_err());
+    }
+
+    #[test]
+    fn link_section() {
+        let c = Config::parse("").unwrap();
+        assert!(c.link.enabled);
+        assert_eq!(c.link.port, 9137);
+        let c = Config::parse("[link]\nport = 9200\ndelay_ms = 45\n").unwrap();
+        assert_eq!((c.link.port, c.link.delay_ms), (9200, 45.0));
     }
 
     #[test]

@@ -38,6 +38,7 @@ Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-st
 ## Architecture in brief
 
 - **Threads:** WASAPI callback → ring → analysis thread (`audio/analysis.rs`, pure `Analyzer` on a 256-sample hop; feeds itself real-time zeros when loopback goes quiet) → triple buffer → render thread. `LoopbackCapture` (main thread, polled per frame) reconnects on stream errors and default-device changes.
+- **Soba link** (`audio/link.rs`, spec in `docs/LINK.md`): OSC on `127.0.0.1:9137` → `seoul-link` thread → timestamped snapshots → merged into the render thread's copy of `AudioFeatures` after `[link] delay_ms`. It adds `cv1..8`, `gate1..4` (+ `_age`, `_count`), `link_live`, `playing` and `bar`, and Soba's clock overrides tempo detection while playing. `--synth` runs a stand-in Soba (`audio/link_fake.rs`) over real UDP; `--record` folds it in directly; `--no-link` turns both off; `cargo run --example link_send` sends it alone.
 - **Time is stamped on the render thread** (`time`, `dt`, `frame`, `aspect`, `resolution`), never in analysis.
 - **Frame:** warp (per-pixel, per active preset) → particles (compute + sprites, optional) → composite (additive `fs_composite`) → bloom → post (mirror/echo, PBR Neutral tonemap, grade) → HUD. Two ping-pong `Rgba16Float` feedback textures follow the window size.
 - **Frame-rate independence:** presets are authored per frame at 60 Hz; `WarpParams::to_uniforms` and the composite mask rescale by `k = dt·60`.

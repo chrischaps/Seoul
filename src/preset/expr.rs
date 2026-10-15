@@ -8,8 +8,11 @@
 //!   arglist  = expr (',' expr)*
 //!
 //! Variables: bass, mid, treble, bass_att, mid_att, treble_att, volume, beat,
-//!            time, dt, frame, bpm, beat_phase, beat_count, aspect, plus any
-//!            preset `[params]` declared earlier (see `parse_with`)
+//!            kick, snare, hat (+ _age, _count), time, dt, frame, bpm,
+//!            beat_phase, beat_count, bar, aspect; the Soba link lanes
+//!            cv1..cv8, gate1..gate4 (+ _age, _count), link_live, playing
+//!            (docs/LINK.md); plus any preset `[params]` declared earlier
+//!            (see `parse_with`)
 //! Functions: sin, cos, tan, abs, sqrt, exp, log, floor, fract, sign,
 //!            pow(x,y), min(a,b), max(a,b), atan2(y,x), step(edge,x),
 //!            clamp(x,lo,hi), mix(a,b,t), smoothstep(e0,e1,x)
@@ -64,7 +67,15 @@ pub enum VarKind {
     Bpm,
     BeatPhase,
     BeatCount,
+    Bar,
     Aspect,
+    // Soba link lanes; the index is 0-based (`cv1` is `Cv(0)`).
+    Cv(u8),
+    Gate(u8),
+    GateAge(u8),
+    GateCount(u8),
+    LinkLive,
+    Playing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +178,14 @@ impl Expr {
                 VarKind::Bpm => ctx.features.bpm,
                 VarKind::BeatPhase => ctx.features.beat_phase,
                 VarKind::BeatCount => ctx.features.beat_count,
+                VarKind::Bar => ctx.features.bar,
                 VarKind::Aspect => ctx.features.aspect,
+                VarKind::Cv(i) => ctx.features.cv[*i as usize],
+                VarKind::Gate(i) => ctx.features.gate[*i as usize],
+                VarKind::GateAge(i) => ctx.features.gate_age[*i as usize],
+                VarKind::GateCount(i) => ctx.features.gate_count[*i as usize],
+                VarKind::LinkLive => ctx.features.link_live,
+                VarKind::Playing => ctx.features.playing,
             },
             Expr::Param(i) => ctx.params.get(*i as usize).copied().unwrap_or(0.0),
             Expr::Neg(e) => -e.eval(ctx),
@@ -470,9 +488,32 @@ fn lookup_var(name: &str) -> Option<VarKind> {
         "bpm" => VarKind::Bpm,
         "beat_phase" => VarKind::BeatPhase,
         "beat_count" => VarKind::BeatCount,
+        "bar" => VarKind::Bar,
         "aspect" => VarKind::Aspect,
-        _ => return None,
+        "link_live" => VarKind::LinkLive,
+        "playing" => VarKind::Playing,
+        _ => return lookup_lane(name),
     })
+}
+
+/// `cv1`..`cv8`, `gate1`..`gate4`, `gateN_age`, `gateN_count`.
+fn lookup_lane(name: &str) -> Option<VarKind> {
+    let lane = |rest: &str, lanes: u8| -> Option<u8> {
+        let n: u8 = rest.parse().ok().filter(|n| (1..=lanes).contains(n))?;
+        // Reject "cv01" and the like: one spelling per lane.
+        (rest.len() == 1).then_some(n - 1)
+    };
+    if let Some(rest) = name.strip_prefix("cv") {
+        return lane(rest, 8).map(VarKind::Cv);
+    }
+    let rest = name.strip_prefix("gate")?;
+    if let Some(n) = rest.strip_suffix("_age") {
+        lane(n, 4).map(VarKind::GateAge)
+    } else if let Some(n) = rest.strip_suffix("_count") {
+        lane(n, 4).map(VarKind::GateCount)
+    } else {
+        lane(rest, 4).map(VarKind::Gate)
+    }
 }
 
 fn lookup_func(name: &str) -> Option<Func> {
@@ -536,6 +577,29 @@ mod tests {
         assert_eq!(eval("time", &f), 2.5);
         let drums = AudioFeatures { kick: 0.5, snare: 0.25, hat: 0.125, ..Default::default() };
         assert_eq!(eval("kick + snare * 10 + hat * 100", &drums), 15.5);
+    }
+
+    #[test]
+    fn link_lanes() {
+        let mut f = AudioFeatures::default();
+        f.cv[0] = 0.25;
+        f.cv[7] = -0.5;
+        f.gate[3] = 1.0;
+        f.gate_age[1] = 0.2;
+        f.gate_count[2] = 9.0;
+        (f.link_live, f.playing, f.bar) = (1.0, 1.0, 12.0);
+        assert_eq!(eval("cv1", &f), 0.25);
+        assert_eq!(eval("cv8", &f), -0.5);
+        assert_eq!(eval("gate4", &f), 1.0);
+        assert_eq!(eval("gate2_age", &f), 0.2);
+        assert_eq!(eval("gate3_count", &f), 9.0);
+        assert_eq!(eval("mix(bass_att, cv1, link_live)", &f), 0.25);
+        assert_eq!(eval("link_live + playing + bar", &f), 14.0);
+        for bad in ["cv0", "cv9", "cv01", "gate5", "gate0_age", "gate1_bogus", "cv"] {
+            assert!(parse(bad).is_err(), "{bad} should not parse");
+        }
+        // No link: gates read as long ago.
+        assert_eq!(eval("gate1_age", &AudioFeatures::default()), 1000.0);
     }
 
     #[test]

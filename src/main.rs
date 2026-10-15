@@ -20,6 +20,7 @@ mod render;
 
 use crate::audio::AudioFeatures;
 use crate::audio::capture::LoopbackCapture;
+use crate::audio::link::{Link, LinkSettings, LinkState};
 use crate::cli::Args;
 use crate::config::{Config, ConfigWatch};
 use crate::preset::curation::{Curation, STATE_PATH};
@@ -50,6 +51,15 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
     s
 }
 
+/// Merge config with command-line overrides into link settings.
+fn link_settings(cfg: &Config, args: &Args) -> LinkSettings {
+    LinkSettings {
+        enabled: cfg.link.enabled && !args.no_link,
+        port: args.link_port.unwrap_or(cfg.link.port),
+        delay_ms: cfg.link.delay_ms,
+    }
+}
+
 /// `--record`: renders offline at a fixed timestep. The synth track is
 /// generated and analyzed in lockstep — exactly one frame of audio per
 /// rendered frame — so the footage is smooth and beat-locked no matter how
@@ -63,10 +73,12 @@ struct Recorder {
     frames: u32,
     /// Fractional samples owed when the sample rate doesn't divide evenly.
     carry: f64,
+    /// The stand-in Soba, stepped at its 200 Hz send rate on this clock.
+    link: Option<(LinkState, u64)>,
 }
 
 impl Recorder {
-    fn new(dir: PathBuf, seconds: f32, fps: f32) -> Self {
+    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool) -> Self {
         Self {
             synth: audio::synth::Synth::default(),
             analyzer: audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE),
@@ -75,16 +87,40 @@ impl Recorder {
             frame: 0,
             frames: (seconds * fps).round().max(1.0) as u32,
             carry: 0.0,
+            link: link.then(|| (LinkState::default(), 0)),
         }
     }
 
-    /// Advance the music by one frame and return the analysis.
-    fn step(&mut self) -> AudioFeatures {
+    /// Simulated time at the end of the current frame's audio.
+    fn time(&self) -> f64 {
+        (self.frame + 1) as f64 / self.fps as f64
+    }
+
+    /// Advance the music by one frame and return the analysis. The stand-in
+    /// Soba's ticks for the same span go straight into `link` (no socket),
+    /// so recordings stay deterministic.
+    fn step(&mut self, link: &mut Link) -> AudioFeatures {
         self.carry += audio::synth::SAMPLE_RATE as f64 / self.fps as f64;
         let n = self.carry.floor() as usize;
         self.carry -= n as f64;
         let samples: Vec<f32> = (0..n).map(|_| self.synth.next_sample()).collect();
         self.analyzer.push(&samples);
+
+        let end = self.time();
+        if let Some((state, tick)) = &mut self.link {
+            loop {
+                let t = *tick as f64 * audio::link_fake::TICK;
+                if t > end {
+                    break;
+                }
+                for msg in audio::link_fake::messages(t) {
+                    state.apply(&msg, t);
+                }
+                state.last_seen = t;
+                link.push(t, *state);
+                *tick += 1;
+            }
+        }
         *self.analyzer.features()
     }
 }
@@ -137,6 +173,7 @@ struct App {
     renderer: Option<Renderer>,
     features: Output<AudioFeatures>,
     audio: AudioInput,
+    link: Link,
     fullscreen: bool,
     reconfigure: bool,
     started: Instant,
@@ -160,6 +197,7 @@ impl App {
                 }
                 r.library_mut().set_settings(settings);
             }
+            self.link.configure(link_settings(&cfg, &self.args));
             self.config = cfg;
         }
 
@@ -169,15 +207,17 @@ impl App {
             return;
         };
 
-        let features = match &mut self.audio {
-            AudioInput::Offline(rec) => rec.step(),
-            _ => *self.features.read(),
+        let (mut features, link_now) = match &mut self.audio {
+            AudioInput::Offline(rec) => (rec.step(&mut self.link), rec.time()),
+            _ => (*self.features.read(), self.link.now()),
         };
+        self.link.apply(&mut features, link_now);
         let status = match &self.audio {
             AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
             AudioInput::Loopback(c) => c.device_name().map_or_else(|| "no audio — retrying".to_owned(), str::to_owned),
         };
         renderer.hud_mut().set_audio_status(&status);
+        renderer.hud_mut().set_link_status(&self.link.status_line(&features));
 
         let frame = match ctx.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
@@ -606,13 +646,30 @@ fn main() -> Result<()> {
         let dir = PathBuf::from(dir);
         std::fs::create_dir_all(&dir)?;
         let fps = args.record_fps.unwrap_or(60.0).clamp(1.0, 240.0);
-        AudioInput::Offline(Box::new(Recorder::new(dir, args.record_seconds.unwrap_or(10.0), fps)))
+        AudioInput::Offline(Box::new(Recorder::new(
+            dir,
+            args.record_seconds.unwrap_or(10.0),
+            fps,
+            !args.no_link,
+        )))
     } else if args.synth {
         audio::synth::spawn_synth(source_tx);
         AudioInput::Synth
     } else {
         AudioInput::Loopback(Box::new(LoopbackCapture::new(source_tx)))
     };
+
+    let link = if args.record.is_some() {
+        Link::offline()
+    } else {
+        Link::new(link_settings(&config, &args))
+    };
+    if args.synth
+        && args.record.is_none()
+        && let Some(port) = link.port()
+    {
+        audio::synth::spawn_fake_link(port);
+    }
 
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -627,6 +684,7 @@ fn main() -> Result<()> {
         renderer: None,
         features,
         audio,
+        link,
         fullscreen: false,
         reconfigure: false,
         started: Instant::now(),

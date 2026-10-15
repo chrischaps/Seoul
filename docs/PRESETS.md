@@ -122,6 +122,12 @@ Arithmetic `+ - * /`, parentheses, unary minus, and:
   last hit (good for things that spread or fade, like ripples);
   `kick_count snare_count hat_count` number the hits, so
   `rand2(vec2<f32>(u.snare_count, 1.0))` gives each hit its own variation.
+- **Soba link:** `cv1`…`cv8` (control lanes, 0..1 or −1..1),
+  `gate1`…`gate4` (0/1) with `gate1_age`… and `gate1_count`… like the
+  drums, `link_live`, `playing` and `bar`. A patch plays these over OSC
+  (see [LINK.md](LINK.md)). With no link they read 0 (ages 1000), so blend
+  toward an audio feature: `mix(bass_att, cv1, link_live)`. Gayageum and
+  Obangsaek are built this way.
 - **Functions** (WGSL semantics): `sin cos tan abs sqrt exp log floor fract
   sign pow min max atan2 step clamp mix smoothstep`.
 
@@ -171,7 +177,8 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
 ±0.5·aspect) or `polar(uv)` → `(radius, angle)` for anything round.
 
 **Available:** `u` (all audio/timing fields above, plus `u.spectrum[64]`,
-`u.waveform[512]`, `u.resolution`), `palette.colors[0..3]`, `TAU`, `PI`,
+`u.waveform[512]`, `u.resolution`, and the link's `u.cv[8]`, `u.gate[4]`,
+`u.gate_age[4]`, `u.gate_count[4]`, 0-based), `palette.colors[0..3]`, `TAU`, `PI`,
 and helpers:
 
 | Helper | |

@@ -1,0 +1,35 @@
+name = "Obangsaek"
+author = "seoul"
+description = "A paper pinwheel in the five cardinal colors turns exactly once a bar on a Soba patch's clock; control lanes feed each color and gates throw blooms of color into the wind."
+edge = "clamp"
+
+# Link preset (docs/LINK.md). The pinwheel's angle comes straight from the
+# clock (beat_count + beat_phase), so with a Soba link it turns once per
+# bar, locked to the patch. cv1–cv5 weight the five colors: blue (east),
+# red (south), yellow (center), white (west) and black (north). gate1–gate4
+# throw red, blue, white and yellow blooms. With no link, the detected tempo
+# turns it and the bands, kick, snare, hat and downbeat play the lanes.
+
+[mapping]
+# Trails spiral out behind the blades like wind.
+zoom        = "1.010 + bass_att * 0.006"
+rotation    = "-0.002"
+warp_amount = "0.0"
+decay       = "0.8"
+blur        = "0.3"
+
+[shader]
+composite = "obangsaek.wgsl"
+
+[palette]
+color0 = [0.03, 0.03, 0.05, 1.0]   # night
+color1 = [0.96, 0.92, 0.84, 1.0]   # hanji
+color2 = [1.00, 0.78, 0.20, 1.0]   # hwang (yellow)
+color3 = [0.45, 0.30, 0.18, 1.0]   # the stick
+
+[post]
+bloom           = 0.5
+bloom_threshold = 0.6
+vignette        = 0.4
+grain           = 0.2
+saturation      = 1.12

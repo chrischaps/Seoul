@@ -354,6 +354,8 @@ impl Analyzer {
         f.volume = self.volume;
         f.beat = self.beat;
         f.beat_count = self.beat_count as f32;
+        // Detected beats aren't bar-aligned; a live Soba link replaces this.
+        f.bar = (self.beat_count / 4) as f32;
         f.bpm = self.bpm;
         f.bpm_confidence = self.bpm_confidence;
         f.beat_phase = self.phase;

@@ -167,6 +167,7 @@ pub struct Hud {
     last_preset: String,
     notice: Option<(String, f32)>,
     audio_status: String,
+    link_status: String,
 
     labels: Labels,
 }
@@ -276,6 +277,7 @@ impl Hud {
             last_preset: String::new(),
             notice: None,
             audio_status: String::new(),
+            link_status: String::new(),
             labels,
         }
     }
@@ -287,6 +289,12 @@ impl Hud {
     pub fn set_audio_status(&mut self, status: &str) {
         if self.audio_status != status {
             self.audio_status = status.to_owned();
+        }
+    }
+
+    pub fn set_link_status(&mut self, status: &str) {
+        if self.link_status != status {
+            self.link_status = status.to_owned();
         }
     }
 
@@ -556,18 +564,26 @@ impl Hud {
             Some(p) => format!("transition {:>3.0}%", p * 100.0),
             None => String::from("stable"),
         };
+        let live = f.link_live > 0.5;
+        // A live, playing link's clock is exact; say whose it is.
+        let conf = if live && f.bpm_confidence >= 1.0 {
+            String::from("link")
+        } else {
+            format!("{:>3.0}%", f.bpm_confidence * 100.0)
+        };
         let text = format!(
-            "{:>4.0} fps  {:>5.1} ms\n{:>5.1} bpm  conf {:>3.0}%\nbeat #{:<5}  phase {:.2}\nauto {}  lock {}\n{}\naudio  {}",
+            "{:>4.0} fps  {:>5.1} ms\n{:>5.1} bpm  conf {}\nbeat #{:<5}  phase {:.2}\nauto {}  lock {}\n{}\naudio  {}\nlink   {}",
             self.fps,
             1000.0 / self.fps.max(1.0),
             f.bpm,
-            f.bpm_confidence * 100.0,
+            conf,
             f.beat_count as u32,
             f.beat_phase,
             onoff(input.auto),
             onoff(input.locked),
             transition,
             self.audio_status,
+            self.link_status,
         );
         let panel_w = 300.0 * u;
         let fs = &mut self.font_system;
@@ -577,7 +593,8 @@ impl Hud {
 
         let x = self.size.0 as f32 - panel_w - 24.0 * u;
         let y = 24.0 * u;
-        let meters_h = 3.0 * 12.0 * u + 16.0 * u + 52.0 * u;
+        let link_h = if live { 26.0 * u } else { 0.0 };
+        let meters_h = 3.0 * 12.0 * u + 16.0 * u + 52.0 * u + link_h;
         let panel_h = 18.0 * u + th + 14.0 * u + meters_h + 18.0 * u;
         self.rect(x, y, panel_w, panel_h, [0.0, 0.0, 0.0, 0.62], 12.0 * u);
         areas.push((LabelId::Stats, x + 18.0 * u, y + 16.0 * u, 0.92));
@@ -621,6 +638,31 @@ impl Hud {
             let c = [0.40 + 0.55 * t, 0.55 + 0.25 * (1.0 - t), 0.98 - 0.45 * t];
             let bh = (strip_h * s.clamp(0.0, 1.0)).max(1.0 * u);
             self.rect(x + 18.0 * u + k as f32 * bar_w, my + strip_h - bh, (bar_w - 1.0 * u).max(1.0), bh, srgb(c, 0.85), 0.0);
+        }
+
+        // Link lanes: eight CV columns that grow up or down from a center
+        // line (Soba sends 0..1 or -1..1), then four gate lamps that hold
+        // while open and flash on each rising edge.
+        if live {
+            my += strip_h + 10.0 * u;
+            let cells = 12.0;
+            let gap = 4.0 * u;
+            let cell_w = (inner_w - (cells - 1.0) * gap) / cells;
+            let h = 16.0 * u;
+            let mid = my + h * 0.5;
+            for (i, &v) in f.cv.iter().enumerate() {
+                let cx = x + 18.0 * u + i as f32 * (cell_w + gap);
+                self.rect(cx, my, cell_w, h, [1.0, 1.0, 1.0, 0.08], 2.0 * u);
+                let reach = (v.clamp(-1.0, 1.0) * h * 0.5).abs().max(1.0 * u);
+                let top = if v >= 0.0 { mid - reach } else { mid };
+                self.rect(cx, top, cell_w, reach, srgb([0.62, 0.86, 0.72], 0.85), 1.0 * u);
+            }
+            for i in 0..4 {
+                let cx = x + 18.0 * u + (8 + i) as f32 * (cell_w + gap);
+                let lit = f.gate[i].max((-f.gate_age[i] * 10.0).exp());
+                self.rect(cx, my, cell_w, h, [1.0, 1.0, 1.0, 0.08], h * 0.5);
+                self.rect(cx, my, cell_w, h, srgb([0.98, 0.62, 0.30], 0.9 * lit), h * 0.5);
+            }
         }
     }
 

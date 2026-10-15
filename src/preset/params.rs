@@ -287,6 +287,9 @@ mod tests {
         assert!(specs("a = { follow = \"1\", tau = 0 }").is_err());
         assert!(specs("bass = \"1\"").is_err());
         assert!(specs("sin = \"1\"").is_err());
+        assert!(specs("cv1 = \"1\"").is_err());
+        assert!(specs("gate2_age = \"1\"").is_err());
+        assert!(specs("cv9 = \"1\"").is_ok());
         assert!(specs("loop = \"1\"").is_err());
         assert!(specs("Cx = \"1\"").is_err());
         assert!(specs("__x = \"1\"").is_err());
