@@ -219,9 +219,23 @@ from 0 to 1, and the frame at 1 matches the frame at 0:
   Starting a few iterations early (`z* + u·λ^−N`, then N steps of z² + c)
   makes the self-similarity exact, and `count − dive` keeps the colors
   continuous across the wrap (`presets/julia_bloom.wgsl`).
+- **The Mandelbrot set:** dive toward a Misiurewicz point c₀ (its orbit
+  lands on a repelling cycle), zooming by that cycle's multiplier. Iterate
+  as a perturbation δ around c₀'s own orbit, which is known exactly, and
+  rebase onto the start of the orbit when |z| < |δ|; then even a deep zoom
+  stays sharp in f32 (`presets/mandelbrot_dive.wgsl`).
+- **Pictures that contain themselves (Droste):** draw one level between an
+  outer edge and an opening 1/S its size, then take `clog(p)`, multiply by
+  α = 1 + ln S/(2πi) (Escher's spiral), slide by `dive · ln S` and wrap
+  into one level before `cexp` (`presets/droste_window.wgsl`).
+- **Phyllotaxis:** seeds at radius gⁿ, n golden angles round, are carried
+  seed to seed by scaling by g. Advance a Fibonacci number of seeds per
+  cycle and they stream outward instead of spinning
+  (`presets/sunflower.wgsl`).
 - **Anything else:** crossfade a few zooming copies a fraction of a cycle
   apart with sin² weights (`presets/kali_nebula.wgsl`), or move objects
-  through a perspective divide (`presets/sonamu.wgsl`).
+  through a perspective divide (`presets/sonamu.wgsl`,
+  `presets/hongsalmun.wgsl`).
 
 A feedback warp built from an expanding map (z² + c) can't zoom in: near
 the set it samples outside the zoomed window. Use the `[post]` video echo

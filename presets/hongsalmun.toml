@@ -1,0 +1,46 @@
+name = "Hongsalmun"
+author = "seoul"
+description = "홍살문: an endless night walk through red arrow gates, each kick a stride forward and a pulse of light running ahead of you."
+
+# Red arrow gates (hongsalmun) stand every few paces along a stone path
+# that never ends; `walk` counts the gates passed.
+#
+# Kick: a stride forward, and a pulse of light racing ahead through the
+#   gates, lighting each lacquered frame as it passes; the moon swells.
+# Snare: the arrow tips flash and the taegeuk blazes.
+# Hats: the stars twinkle.
+# Groove (kicks flowing) keeps you walking; in a breakdown you slow to a
+# standstill and the gates sink into the dark until the drop.
+[params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_age * 6)"
+clap   = "exp(-snare_age * 5)"
+tick   = "exp(-hat_age * 12)"
+speed  = { follow = "0.05 + groove * (0.15 + bass_att * 0.35) + hit * 2.2", tau = 0.07 }
+walk   = { rate = "speed" }
+sway   = { follow = "mid_att", tau = 1.0 }
+glow   = { follow = "groove * (0.6 + volume * 0.4)", tau = 0.4 }
+
+[mapping]
+zoom        = "1.001 + hit * 0.006"
+cy          = "0.47"
+rotation    = "0"
+warp_amount = "0"
+decay       = "0.8"
+blur        = "0.1"
+
+[shader]
+composite = "hongsalmun.wgsl"
+
+[palette]
+color0 = [0.02, 0.03, 0.08, 1.0]   # night
+color1 = [0.85, 0.10, 0.06, 1.0]   # lacquer red
+color2 = [0.20, 0.45, 0.95, 1.0]   # lantern blue
+color3 = [1.00, 0.85, 0.55, 1.0]   # lamplight
+
+[post]
+chroma     = "clap * 0.4"
+bloom      = 0.6
+saturation = 1.1
+vignette   = 0.5
+grain      = 0.2

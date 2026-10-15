@@ -1,0 +1,47 @@
+name = "Sunflower"
+author = "seoul"
+description = "Falling into a sunflower's head: every seed is the one before it, a little larger and turned by the golden angle."
+
+# Seed n sits at radius gⁿ, turned n golden angles. Scale by g and turn by
+# the golden angle and seed n lands exactly on seed n+1, so the dive
+# (`travel`, counted in seeds) streams them outward from the center
+# forever.
+#
+# Kick: the head breathes. Seeds swell, petals open, a ripple runs
+#   outward, and the stream surges forward.
+# Snare: a burst of pollen glints across the head.
+# Hats: single seeds twinkle.
+# Spectrum: each spiral arm is a note, low on one arm and high on the next.
+# Groove (kicks flowing) keeps it streaming; in a breakdown the flow slows
+# to a crawl and the head dims to a dusk glow until the drop.
+[params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_age * 6)"
+clap   = "exp(-snare_age * 5)"
+tick   = "exp(-hat_age * 14)"
+speed  = { follow = "1.5 + groove * (4 + bass_att * 8) + hit * 40", tau = 0.06 }
+travel = { rate = "speed" }
+spin   = { rate = "0.01 + groove * (0.02 + mid_att * 0.04)" }
+pollen = { follow = "treble", tau = 0.12 }
+
+[mapping]
+zoom        = "pow(1.0065, speed / 60)"
+rotation    = "0"
+warp_amount = "0"
+decay       = "0.72"
+blur        = "0.0"
+
+[shader]
+composite = "sunflower.wgsl"
+
+[palette]
+color0 = [0.16, 0.08, 0.03, 1.0]   # seed brown
+color1 = [1.00, 0.55, 0.04, 1.0]   # gold
+color2 = [0.95, 0.40, 0.08, 1.0]   # amber
+color3 = [1.00, 0.96, 0.80, 1.0]   # pollen
+
+[post]
+bloom      = 0.55
+saturation = 1.15
+vignette   = 0.45
+grain      = 0.12

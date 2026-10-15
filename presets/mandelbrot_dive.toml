@@ -1,0 +1,48 @@
+name = "Misiurewicz"
+author = "seoul"
+description = "An endless fall into the Mandelbrot set, toward a point where three filaments branch forever."
+
+# c₀ = −0.1011 + 0.9563i is a Misiurewicz point: its orbit lands on a
+# repelling fixed point after three steps, so near c₀ the set repeats
+# itself at every scale, ×2.34 per level. The shader zooms one level as
+# `dive` runs 0 → 1 and wraps.
+#
+# Kick: the fall lurches a step deeper and the filaments flare.
+# Snare: the colors jump around the palette.
+# Hats: sparks run along the filaments.
+# Groove (kicks flowing) keeps the fall going; in a breakdown it slows to
+# a drift and the glow cools and dims until the drop.
+[params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_age * 7)"
+clap   = "exp(-snare_age * 5)"
+tick   = "exp(-hat_age * 14)"
+speed  = { follow = "0.03 + groove * (0.07 + bass_att * 0.12) + hit * 0.9", tau = 0.06 }
+dive   = { rate = "speed", wrap = 1.0 }
+spin   = { rate = "0.01 + groove * (0.015 + mid_att * 0.03)" }
+shine  = { follow = "treble", tau = 0.15 }
+hue    = { rate = "0.006 + clap * 0.5" }
+
+[mapping]
+zoom        = "1.002 + groove * 0.002 + hit * 0.008"
+rotation    = "0"
+warp_amount = "0"
+decay       = "0.86"
+blur        = "0.2"
+
+[shader]
+composite = "mandelbrot_dive.wgsl"
+
+[palette]
+color0 = [0.02, 0.03, 0.10, 1.0]   # deep night
+color1 = [0.18, 0.42, 0.90, 1.0]   # electric blue
+color2 = [0.70, 0.30, 0.85, 1.0]   # violet
+color3 = [1.00, 0.86, 0.62, 1.0]   # filament gold
+
+[post]
+exposure   = "0.85 + groove * 0.15"
+chroma     = "clap * 0.5"
+bloom      = 0.6
+saturation = 1.2
+vignette   = 0.4
+grain      = 0.12

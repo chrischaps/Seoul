@@ -1,0 +1,49 @@
+name = "Window Within"
+author = "seoul"
+description = "A lamplit changsal window that holds itself, spiraling inward forever; the kick is the lamp, the snare blossoms in the shadows."
+
+# The picture is one window: a wooden frame, a lattice, and lamplit paper
+# around a square opening, and through the opening, the same window,
+# 1/S the size. Escher's map turns those nested copies into one spiral,
+# and `dive` descends a level per unit, exactly, so it never runs out.
+#
+# Kick: the lamp behind the paper flares and the descent lurches inward.
+# Snare: the plum blossoms in the branch's shadow light up pink, and
+#   light races around the frames.
+# Hats: the lattice bars glint.
+# Groove (kicks flowing) keeps the lamp warm and the spiral turning; in a
+# breakdown the lamp sinks low, moonlight cools the paper, and the
+# descent slows to a drift.
+[params]
+groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_age * 6)"
+clap   = "exp(-snare_age * 4)"
+tick   = "exp(-hat_age * 14)"
+speed  = { follow = "0.03 + groove * (0.05 + bass_att * 0.12) + hit * 0.7", tau = 0.06 }
+dive   = { rate = "speed", wrap = 1.0 }
+spin   = { rate = "0.006 + groove * (0.01 + mid_att * 0.02)" }
+lamp   = "0.24 + groove * 0.46 + hit * 0.5"
+warm   = { follow = "mid_att", tau = 1.5 }
+shim   = { follow = "treble", tau = 0.1 }
+
+[mapping]
+zoom        = "1.002 + hit * 0.006"
+rotation    = "0"
+warp_amount = "0"
+decay       = "0.84"
+blur        = "0.15"
+
+[shader]
+composite = "droste_window.wgsl"
+
+[palette]
+color0 = [0.03, 0.04, 0.12, 1.0]   # night indigo
+color1 = [1.00, 0.50, 0.18, 1.0]   # hanji lamplight
+color2 = [0.40, 0.20, 0.10, 1.0]   # wood
+color3 = [0.92, 0.94, 1.00, 1.0]   # moon white
+
+[post]
+bloom      = 0.5
+saturation = 1.1
+vignette   = 0.45
+grain      = 0.18
