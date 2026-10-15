@@ -45,6 +45,7 @@ struct WarpUniforms {
 };
 @group(1) @binding(0) var<uniform> w: WarpUniforms;
 @group(2) @binding(0) var<storage, read> u: AudioFeatures;
+@group(2) @binding(1) var hist: texture_2d<f32>;
 @group(3) @binding(0) var<uniform> palette: Palette;
 
 struct Varying {

@@ -1,0 +1,30 @@
+name = "Bukhansan Ridges"
+author = "seoul"
+description = "Granite ridgelines receding into mist, each one the song as it sounded a moment earlier; a day passes at the pace of the music."
+edge = "clamp"
+
+[mapping]
+zoom        = "1.0"
+rotation    = "0.0"
+warp_amount = "0.0"
+decay       = "0.5"
+
+[params]
+# 0 → 1 is one day: afterglow at 0 and 1, deep night at 0.5. Louder music
+# turns the sky faster (a day takes about 1½–2 minutes).
+day = { rate = "0.004 + volume * 0.007", wrap = 1.0 }
+
+[shader]
+composite = "bukhansan_ridges.wgsl"
+
+[palette]
+color0 = [0.16, 0.18, 0.42, 1.0]   # dusk blue
+color1 = [1.00, 0.52, 0.36, 1.0]   # afterglow
+color2 = [0.55, 0.66, 0.88, 1.0]   # valley haze
+color3 = [0.95, 0.93, 0.86, 1.0]   # moonlight
+
+[post]
+bloom           = 0.5
+bloom_threshold = 0.45
+vignette        = 0.35
+grain           = 0.2

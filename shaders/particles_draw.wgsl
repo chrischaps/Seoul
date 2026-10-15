@@ -4,6 +4,7 @@
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> p: ParticleUniforms;
 @group(1) @binding(0) var<storage, read> u: AudioFeatures;
+@group(1) @binding(1) var hist: texture_2d<f32>;
 @group(2) @binding(0) var<uniform> palette: Palette;
 
 struct SpriteOut {

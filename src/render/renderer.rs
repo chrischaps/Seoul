@@ -15,6 +15,7 @@ use crate::preset::shader::{CompositeLayouts, palette_layout};
 use crate::render::context::RenderContext;
 use crate::render::feedback::{FeedbackTextures, feedback_size};
 use crate::render::gpu;
+use crate::render::history::SpectrumHistory;
 use crate::render::hud::{Hud, HudInput};
 use crate::render::mask::{MaskPass, MaskSlot};
 use crate::render::particles::{ParticleFrame, ParticleSystem};
@@ -33,6 +34,7 @@ pub struct RendererOptions {
 pub struct Renderer {
     audio_buf: wgpu::Buffer,
     audio_bg: wgpu::BindGroup,
+    history: SpectrumHistory,
     feedback: FeedbackTextures,
     warp: WarpPass,
     mask: MaskPass,
@@ -61,11 +63,12 @@ impl Renderer {
             contents: bytemuck::bytes_of(&AudioFeatures::default()),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        // Audio features are read by composite and warp fragments, particle
-        // vertices and the particle simulation.
+        let history = SpectrumHistory::new(device);
+        // Audio features and spectrum history are read by composite and warp
+        // fragments, particle vertices and the particle simulation.
         let audio_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seoul.audio_features.bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+            entries: &[SpectrumHistory::layout_entry(1), wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
@@ -79,10 +82,10 @@ impl Renderer {
         let audio_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("seoul.audio_features.bg"),
             layout: &audio_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: audio_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: audio_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(history.view()) },
+            ],
         });
 
         let output_size = (ctx.size.width, ctx.size.height);
@@ -106,6 +109,7 @@ impl Renderer {
         Ok(Self {
             audio_buf,
             audio_bg,
+            history,
             feedback,
             warp,
             mask,
@@ -207,6 +211,7 @@ impl Renderer {
         self.library.tick_params(&ctx.queue, &f);
         let plan = self.library.frame_plan(&f);
 
+        self.history.update(&ctx.queue, &mut f);
         ctx.queue.write_buffer(&self.audio_buf, 0, bytemuck::bytes_of(&f));
         self.post.update(&ctx.queue, &plan.post, f.time, f.beat, self.output_size);
         let warp_draws: Vec<WarpDraw> = plan

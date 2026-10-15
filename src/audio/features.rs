@@ -55,7 +55,9 @@ pub struct AudioFeatures {
     pub kick: f32,
     pub snare: f32,
     pub hat: f32,
-    pub _pad2: f32,
+    /// Head of the spectrum-history ring (`render/history.rs`): newest row
+    /// index plus progress toward the next. Stamped by the render thread.
+    pub hist_pos: f32,
     /// Seconds since each instrument's last onset (capped at 1000).
     pub kick_age: f32,
     pub snare_age: f32,

@@ -5,6 +5,7 @@
 // `in.uv` runs 0..1 with y pointing UP (0 = bottom of the screen).
 
 @group(0) @binding(0) var<storage, read> u: AudioFeatures;
+@group(0) @binding(1) var hist: texture_2d<f32>;
 @group(1) @binding(0) var<uniform> palette: Palette;
 
 struct Varying {

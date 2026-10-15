@@ -31,7 +31,7 @@ struct AudioFeatures {
     kick: f32,
     snare: f32,
     hat: f32,
-    pad2: f32,
+    hist_pos: f32,
 
     kick_age: f32,
     snare_age: f32,
@@ -82,6 +82,29 @@ fn spectrum_at(t: f32) -> f32 {
     let i = u32(x);
     let j = min(i + 1u, 63u);
     return mix(u.spectrum[i], u.spectrum[j], fract(x));
+}
+
+// The spectrum as it was `seconds` ago (0 = now, up to HIST_SECONDS), at
+// `t` 0..1 low→high: a scrolling spectrogram, interpolated in both
+// directions. `hist` is declared by each prelude.
+const HIST_ROWS: f32 = 256.0;
+const HIST_RATE: f32 = 30.0;
+const HIST_SECONDS: f32 = 8.5;
+
+fn hist_row(row: f32, x: i32) -> f32 {
+    let r = i32(row - floor(row / HIST_ROWS) * HIST_ROWS);
+    return textureLoad(hist, vec2<i32>(x, r), 0).r;
+}
+
+fn spectrum_ago(t: f32, seconds: f32) -> f32 {
+    let s = min(u.hist_pos - clamp(seconds, 0.0, HIST_SECONDS) * HIST_RATE, floor(u.hist_pos));
+    let x = clamp(t, 0.0, 1.0) * 63.0;
+    let i = i32(x);
+    let j = min(i + 1, 63);
+    let r0 = floor(s);
+    let a = mix(hist_row(r0, i), hist_row(r0, j), fract(x));
+    let b = mix(hist_row(r0 + 1.0, i), hist_row(r0 + 1.0, j), fract(x));
+    return mix(a, b, s - r0);
 }
 
 // ---- Color ----------------------------------------------------------------
