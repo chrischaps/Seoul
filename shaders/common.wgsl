@@ -259,3 +259,36 @@ fn rain(p: vec2<f32>, t: f32, density: f32, slant: f32) -> f32 {
     let thin = smoothstep(0.5, 0.1, abs(fract(q.x) - 0.5));
     return streak * thin * step(rand2(vec2<f32>(col, 3.0)), density);
 }
+
+// --- Drums a Soba patch can play (docs/LINK.md) ---------------------------
+// `drum(KICK)` is the kick as heard, until a linked Soba patch plays gate 1:
+// then the patch's hits stand in for it. Gate 2 plays the snare and gate 3
+// the hats. A gate the patch hasn't played leaves its drum to the ears, so
+// a patch can take over the kick and nothing else.
+const KICK: u32 = 0u;
+const SNARE: u32 = 1u;
+const HAT: u32 = 2u;
+
+struct Drum {
+    hit: f32,    // jumps to 1 on a hit and decays, as u.kick does
+    age: f32,    // seconds since the last hit, as u.kick_age
+    count: f32,  // hits so far, as u.kick_count
+};
+
+fn drum(i: u32) -> Drum {
+    var heard = Drum(u.kick, u.kick_age, u.kick_count);
+    // The envelope the analysis gives each drum (analysis.rs, *_TIMING.tau)
+    var tau = 0.10;
+    if (i == SNARE) {
+        heard = Drum(u.snare, u.snare_age, u.snare_count);
+        tau = 0.12;
+    } else if (i == HAT) {
+        heard = Drum(u.hat, u.hat_age, u.hat_count);
+        tau = 0.05;
+    }
+    if (u.link_live > 0.5 && u.gate_count[i] > 0.5) {
+        let age = u.gate_age[i];
+        return Drum(exp(-age / tau), age, u.gate_count[i]);
+    }
+    return heard;
+}

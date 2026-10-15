@@ -65,7 +65,7 @@ fn window(z: vec2<f32>, px: f32) -> vec3<f32> {
     let ld = lattice_dist(z);
     let bar = 0.0032;
     let lattice = smoothstep(bar + aa, bar - aa, ld);
-    let shimmer = 1.0 + (q.shim * 0.5 + q.tick * 2.0) * (0.5 + 0.5 * sin(z.x * 40.0 + z.y * 55.0 + u.hat_count * 2.3));
+    let shimmer = 1.0 + (q.shim * 0.5 + q.tick * 2.0) * (0.5 + 0.5 * sin(z.x * 40.0 + z.y * 55.0 + drum(HAT).count * 2.3));
 
     // The branch shadow is soft (the moon is a disk, not a point).
     let bd = branch_dist(z);
@@ -87,7 +87,7 @@ fn window(z: vec2<f32>, px: f32) -> vec3<f32> {
     col = col + palette.colors[2].rgb * frame * grain * 0.012;
     // Light runs around the frame's edges, faster on beats.
     let ang = atan2(z.y, z.x);
-    let run = pow(0.5 + 0.5 * cos(ang * 2.0 - u.snare_count * 1.7 - (1.0 - q.clap) * 6.0), 10.0);
+    let run = pow(0.5 + 0.5 * cos(ang * 2.0 - drum(SNARE).count * 1.7 - (1.0 - q.clap) * 6.0), 10.0);
     let edge = exp(-abs(outer + FRAME) / (px * 2.5)) + exp(-abs(outer) / (px * 2.5));
     col = col + palette.colors[3].rgb * edge * (run * (0.002 + q.clap * 0.04) + q.hit * 0.004);
     return col;

@@ -11,15 +11,22 @@ description = "홍살문: an endless night walk through red arrow gates, each ki
 # Hats: the stars twinkle.
 # Groove (kicks flowing) keeps you walking; in a breakdown you slow to a
 # standstill and the gates sink into the dark until the drop.
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lights the gates and cv3 quickens the
+# walk. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-hit    = "exp(-kick_age * 6)"
-clap   = "exp(-snare_age * 5)"
-tick   = "exp(-hat_age * 12)"
-speed  = { follow = "0.05 + groove * (0.15 + bass_att * 0.35) + hit * 2.2", tau = 0.07 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+hat_t = "mix(hat_age, gate3_age, link_live * step(0.5, gate3_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_t * 6)"
+clap   = "exp(-snare_t * 5)"
+tick   = "exp(-hat_t * 12)"
+speed  = { follow = "0.05 + groove * (0.15 + bass_att * 0.35) + hit * 2.2 + abs(cv3) * 0.8", tau = 0.07 }
 walk   = { rate = "speed" }
 sway   = { follow = "mid_att", tau = 1.0 }
-glow   = { follow = "groove * (0.6 + volume * 0.4)", tau = 0.4 }
+glow   = { follow = "groove * (0.6 + volume * 0.4) + max(cv1, 0) * 0.6", tau = 0.4 }
 
 [mapping]
 zoom        = "1.001 + hit * 0.006"

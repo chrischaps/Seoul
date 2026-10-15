@@ -14,16 +14,23 @@ description = "A lamplit changsal window that holds itself, spiraling inward for
 # Groove (kicks flowing) keeps the lamp warm and the spiral turning; in a
 # breakdown the lamp sinks low, moonlight cools the paper, and the
 # descent slows to a drift.
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 brightens the lamp, cv2 warms the paper
+# and cv3 hurries the descent. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-hit    = "exp(-kick_age * 6)"
-clap   = "exp(-snare_age * 4)"
-tick   = "exp(-hat_age * 14)"
-speed  = { follow = "0.03 + groove * (0.05 + bass_att * 0.12) + hit * 0.7", tau = 0.06 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+hat_t = "mix(hat_age, gate3_age, link_live * step(0.5, gate3_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_t * 6)"
+clap   = "exp(-snare_t * 4)"
+tick   = "exp(-hat_t * 14)"
+speed  = { follow = "0.03 + groove * (0.05 + bass_att * 0.12) + hit * 0.7 + abs(cv3) * 0.3", tau = 0.06 }
 dive   = { rate = "speed", wrap = 1.0 }
 spin   = { rate = "0.006 + groove * (0.01 + mid_att * 0.02)" }
-lamp   = "0.24 + groove * 0.46 + hit * 0.5"
-warm   = { follow = "mid_att", tau = 1.5 }
+lamp   = "0.24 + groove * 0.46 + hit * 0.5 + max(cv1, 0) * 0.3"
+warm   = { follow = "max(mid_att + cv2, 0)", tau = 1.5 }
 shim   = { follow = "treble", tau = 0.1 }
 
 [mapping]

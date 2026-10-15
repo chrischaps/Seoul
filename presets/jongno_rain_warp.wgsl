@@ -18,12 +18,14 @@ fn fs_warp(in: Varying) -> @location(0) vec4<f32> {
     // Older rings are placed one beat apart: an estimate, since only the
     // newest kick's age is known.
     let interval = 60.0 / max(u.bpm, 60.0);
+    // The kicks, or a Soba patch playing them
+    let kick = drum(KICK);
     for (var k = 0; k < 3; k = k + 1) {
-        let n = u.kick_count - f32(k);
+        let n = kick.count - f32(k);
         if (n < 1.0) {
             break;
         }
-        let age = u.kick_age + f32(k) * interval;
+        let age = kick.age + f32(k) * interval;
         let center = vec2<f32>(
             0.08 + 0.84 * rand2(vec2<f32>(n, 11.0)),
             HORIZON_T + 0.03 + (0.97 - HORIZON_T - 0.03) * rand2(vec2<f32>(n, 12.0)));

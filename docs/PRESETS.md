@@ -127,7 +127,9 @@ Arithmetic `+ - * /`, parentheses, unary minus, and:
   drums, `link_live`, `playing` and `bar`. A patch plays these over OSC
   (see [LINK.md](LINK.md)). With no link they read 0 (ages 1000), so blend
   toward an audio feature: `mix(bass_att, cv1, link_live)`. Gayageum and
-  Obangsaek are built this way.
+  Obangsaek are built this way. To let a patch play a preset's drums, see
+  "Playing the drums" in LINK.md: in WGSL, `drum(KICK)` (or `SNARE`,
+  `HAT`) is the heard drum until a patch plays its gate.
 - **Functions** (WGSL semantics): `sin cos tan abs sqrt exp log floor fract
   sign pow min max atan2 step clamp mix smoothstep`.
 
@@ -192,6 +194,7 @@ and helpers:
 | `rand2(p)`, `vnoise(p)`, `fbm(p)` | hash, value noise, 4-octave fractal noise |
 | `curl_noise(p)` | divergence-free 2D flow |
 | `params()` | this preset's `[params]` (if it declares any) |
+| `drum(KICK)`, `drum(SNARE)`, `drum(HAT)` | `Drum { hit, age, count }`: the drum heard, or a Soba patch's gate 1–3 once it plays one (LINK.md) |
 
 ### Fractal helpers
 

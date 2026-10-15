@@ -22,7 +22,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     let c = centered(p);
-    let groove = params().groove;
+    // The drums, or a Soba patch playing them; cv1 lights the city
+    let kick = drum(KICK);
+    let snare = drum(SNARE);
+    let hat = drum(HAT);
+    let groove = min(params().groove + max(u.cv[0], 0.0), 1.0);
     // City glow: a warm haze of light pollution hugging the horizon.
     let haze = exp(-(p.y - HORIZON) * 9.0);
     var col = mix(palette.colors[0].rgb, palette.colors[1].rgb, 0.25 * haze * groove) * haze * (0.006 + 0.008 * groove);
@@ -50,7 +54,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let lit = step(0.62 + (1.0 - groove) * 0.34, rand2(wcell + vec2<f32>(0.0, floor(u.time * 0.2))));
     let wdot = smoothstep(0.45, 0.2, length(fract(win) - 0.5));
     let flicker = 0.7 + 0.3 * sin(u.time * 3.0 + rand2(wcell) * TAU) * u.treble
-        + u.hat * step(0.8, rand2(wcell + vec2<f32>(u.hat_count, 5.0))) * 1.5;
+        + hat.hit * step(0.8, rand2(wcell + vec2<f32>(hat.count, 5.0))) * 1.5;
     let warm = mix(palette.colors[1].rgb, palette.colors[3].rgb, rand2(wcell + 9.0) * 0.6);
     col = col + warm * in_tower * lit * wdot * flicker * 0.06;
     col = col + palette.colors[0].rgb * in_tower * 0.010;
@@ -61,7 +65,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let ld = length(c - lamp);
     // Each kick sends a pulse of light from the middle of the bridge out
     // to both banks.
-    let run = exp(-pow((abs(lamp_x - 0.5) - u.kick_age * 1.4) * 14.0, 2.0)) * exp(-u.kick_age * 2.0);
+    let run = exp(-pow((abs(lamp_x - 0.5) - kick.age * 1.4) * 14.0, 2.0)) * exp(-kick.age * 2.0);
     col = col + palette.colors[1].rgb * (smoothstep(0.004, 0.0015, ld) * (0.12 + run * 0.4) + exp(-ld * ld * 9000.0) * (0.02 + run * 0.12));
     col = col + palette.colors[0].rgb * 2.5 * smoothstep(0.003, 0.0, abs(p.y - dy)) * 0.02;
 
@@ -71,16 +75,16 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     if (p.y < dy && p.x > 0.06 && p.x < 0.94) {
         let fall = (dy - p.y) / (dy - HORIZON);
         let streak = vnoise(vec2<f32>(p.x * 220.0, p.y * 14.0 + u.time * 6.0));
-        let hue = hue_rotate(vec3<f32>(1.0, 0.25, 0.3), p.x * TAU * 1.5 + u.time * 0.4);
-        let pour = (0.03 + groove * 0.12 + u.kick * 1.4) * (1.0 - fall * 0.7);
+        let hue = hue_rotate(vec3<f32>(1.0, 0.25, 0.3), p.x * TAU * 1.5 + u.time * 0.4 + u.cv[1] * TAU);
+        let pour = (0.03 + groove * 0.12 + kick.hit * 1.4) * (1.0 - fall * 0.7);
         col = col + max(hue, vec3<f32>(0.0)) * pow(streak, 5.0) * pour * 0.13;
     }
 
     // Fireworks: most snares burst a shell high over the river, a ring of
     // sparks that flies out, sags under gravity and burns out.
-    let fw = u.snare_count;
-    if (rand2(vec2<f32>(fw, 1.0)) < 0.7 && u.snare_age < 1.4) {
-        let age = u.snare_age;
+    let fw = snare.count;
+    if (rand2(vec2<f32>(fw, 1.0)) < 0.7 && snare.age < 1.4) {
+        let age = snare.age;
         let at = vec2<f32>((rand2(vec2<f32>(fw, 2.0)) - 0.5) * u.aspect * 0.8, 0.16 + 0.2 * rand2(vec2<f32>(fw, 3.0)));
         let size = 0.08 + 0.06 * rand2(vec2<f32>(fw, 4.0));
         let reach = size * (1.0 - exp(-age * 5.0));

@@ -81,19 +81,23 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let p = in.uv;
     let c = centered(p);
     let t = u.time;
-    let groove = params().groove;
+    // The drums, or a Soba patch playing them; cv1 powers the signs
+    let kick = drum(KICK);
+    let snare = drum(SNARE);
+    let hat = drum(HAT);
+    let groove = min(params().groove + max(u.cv[0], 0.0), 1.0);
 
     // Below the horizon is the wet street, drawn by the warp; only the
     // splashes of the heaviest drops are added here.
     if (p.y < HORIZON) {
         let cell = floor(vec2<f32>(c.x * 260.0, p.y * 90.0));
-        let splash = step(0.9985 - u.hat * 0.002, rand2(cell + floor(t * 24.0) * 7.31));
+        let splash = step(0.9985 - hat.hit * 0.002, rand2(cell + floor(t * 24.0) * 7.31));
         return vec4<f32>(palette.colors[3].rgb * splash * 0.10, 1.0);
     }
 
     // Lightning: every snare lights the clouds; about a third throw a bolt.
-    let strike = rand2(vec2<f32>(u.snare_count, 7.0)) < 0.33;
-    let flash = u.snare * select(0.2, 1.0, strike);
+    let strike = rand2(vec2<f32>(snare.count, 7.0)) < 0.33;
+    let flash = snare.hit * select(0.2, 1.0, strike);
 
     // Sky: city glow pooling at the horizon under slow low cloud.
     let haze = exp(-(p.y - HORIZON) * 5.0);
@@ -103,20 +107,20 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     col = col + cloud * (palette.colors[1].rgb * 0.0025 * haze + vec3<f32>(0.75, 0.82, 1.0) * flash * 0.05);
     col = col + vec3<f32>(0.75, 0.82, 1.0) * flash * 0.006;
 
-    if (strike && u.snare_age < 0.15) {
+    if (strike && snare.age < 0.15) {
         // A jagged bolt from the top of the frame to the rooftops.
-        let x0 = (rand2(vec2<f32>(u.snare_count, 8.0)) - 0.5) * u.aspect * 0.8;
+        let x0 = (rand2(vec2<f32>(snare.count, 8.0)) - 0.5) * u.aspect * 0.8;
         var a = vec2<f32>(x0, 0.5);
         var bd = 1e3;
         for (var k = 1; k <= 8; k = k + 1) {
             let fk = f32(k);
             let b = vec2<f32>(
-                a.x + (rand2(vec2<f32>(u.snare_count, 20.0 + fk)) - 0.5) * 0.09,
+                a.x + (rand2(vec2<f32>(snare.count, 20.0 + fk)) - 0.5) * 0.09,
                 0.5 - fk * 0.065);
             bd = min(bd, sd_segment(c, a, b));
             a = b;
         }
-        let life = exp(-u.snare_age * 20.0);
+        let life = exp(-snare.age * 20.0);
         col = col + vec3<f32>(0.8, 0.86, 1.0) * (smoothstep(0.003, 0.0, bd) * 0.5 + glow(bd, 0.02) * 0.04) * life;
     }
 
@@ -142,8 +146,8 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let near_cut = 1.0 - smoothstep(0.0, 0.12, abs(groove - cut));
     let buzz = step(0.5, rand2(vec2<f32>(floor(t * 18.0), si + 5.0)));
     let power = smoothstep(cut - 0.03, cut + 0.03, groove) * (1.0 - near_cut * buzz * 0.8);
-    let flare = 1.0 + u.kick * 1.3;
-    let neon = sign_color(si) * power * flare;
+    let flare = 1.0 + kick.hit * 1.3;
+    let neon = max(hue_rotate(sign_color(si), u.cv[1] * TAU), vec3<f32>(0.0)) * power * flare;
     let board = sd_box(sl - vec2<f32>(0.0, CELLS * 0.5), vec2<f32>(0.62, CELLS * 0.5 + 0.12));
     if (board < 0.6) {
         let t0 = si / SIGNS;
@@ -203,8 +207,8 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
 
     // Rain over everything, lit by the street (darker when the neon is
     // out): hats make it glint.
-    let r = rain(c, t, 0.45, 0.12);
-    col = col + mix(vec3<f32>(0.7, 0.8, 1.0), palette.colors[3].rgb, 0.3) * r * ((0.004 + 0.010 * groove) * (1.0 + u.kick * 0.6) + u.hat * 0.03);
+    let r = rain(c, t, 0.45 + abs(u.cv[2]) * 0.45, 0.12);
+    col = col + mix(vec3<f32>(0.7, 0.8, 1.0), palette.colors[3].rgb, 0.3) * r * ((0.004 + 0.010 * groove) * (1.0 + kick.hit * 0.6) + hat.hit * 0.03);
 
     return vec4<f32>(col, 1.0);
 }

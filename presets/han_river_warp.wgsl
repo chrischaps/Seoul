@@ -13,6 +13,6 @@ fn fs_warp(in: Varying) -> @location(0) vec4<f32> {
         let src = warp_uv(uv);
         return finish(src, sample_prev(src));
     }
-    let refl = water_reflect(uv, HORIZON_T, 0.5 + u.bass * 0.6 + u.kick * 1.6, u.mid * 3.0);
+    let refl = water_reflect(uv, HORIZON_T, 0.5 + u.bass * 0.6 + drum(KICK).hit * 1.6 + abs(u.cv[2]) * 1.5, u.mid * 3.0);
     return vec4<f32>(refl * w.decay, 1.0);
 }

@@ -83,6 +83,38 @@ auto-advance's downbeat wait. A stopped transport hands the clock back to
 detection, because a frozen phase would freeze those presets. When the
 link drops, detection takes over again with one jump in phase.
 
+### Playing the drums
+
+Most presets are drawn from the kick, the snare and the hats. A preset can
+let a patch play those instead of the ears, with one convention, so one
+patch plays every preset that follows it:
+
+| Lane | Plays |
+| --- | --- |
+| `gate1` | the kick |
+| `gate2` | the snare |
+| `gate3` | the hats |
+| `gate4` | free: Obangsaek blooms on it, and a downbeat suits it |
+| `cv1` | energy: a brighter, busier picture |
+| `cv2` | color: hues turn, or light warms |
+| `cv3` | motion: things move faster |
+
+A gate takes over its drum only once the patch has played it
+(`gateN_count > 0` while the link is live), so a patch can play the kick
+and leave the hats to the ears. The CV lanes only ever add to what the
+preset does, so an empty lane, which reads 0, changes nothing. In WGSL,
+`drum(KICK)`, `drum(SNARE)` and `drum(HAT)` give a `Drum { hit, age, count }`
+that's either; in a preset's TOML, the same switch is
+
+```toml
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+```
+
+Han River, Jongno Rain, Hongsalmun, Window Within and Cheonggyecheon
+Lanterns follow it, and each says in its TOML what its lanes do. Soba's
+Pinwheel example plays it: kick, snare and hats on gates 1–3 and the
+downbeat on gate 4.
+
 ## Latency: `delay_ms`
 
 UDP arrives in well under a millisecond, but loopback audio reaches Seoul

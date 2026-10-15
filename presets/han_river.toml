@@ -12,8 +12,13 @@ edge = "clamp"
 #   groove    while the kicks keep coming the city is lit; in a kick-less
 #             breakdown the fountain stops and the windows go dark, until
 #             the drop switches everything back on at once
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lights the city, cv2 turns the fountain's
+# colors and cv3 stirs the river. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
 
 [mapping]
 zoom        = "1.0"
@@ -32,7 +37,7 @@ color2 = [0.95, 0.35, 0.60, 1.0]   # neon pink
 color3 = [0.92, 0.94, 1.00, 1.0]   # moonlight
 
 [post]
-bloom           = "0.6 + kick * 0.35"
+bloom           = "0.6 + exp(-kick_t * 10) * 0.35"
 bloom_threshold = 0.35
 vignette        = 0.4
 grain           = 0.25

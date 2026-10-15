@@ -68,7 +68,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // Sky: a faint glow at the horizon, and stars.
     var col = palette.colors[0].rgb * 0.004 * exp(-max(s.y - HORIZON, 0.0) * 4.0);
     let star = stars(s + vec2<f32>(q.walk * 0.002, 0.0), 60.0, 0.12);
-    let twinkle = 0.5 + 1.5 * q.tick * step(0.5, rand2(floor((s + vec2<f32>(q.walk * 0.002, 0.0)) * 60.0) + u.hat_count));
+    let twinkle = 0.5 + 1.5 * q.tick * step(0.5, rand2(floor((s + vec2<f32>(q.walk * 0.002, 0.0)) * 60.0) + drum(HAT).count));
     col = col + palette.colors[3].rgb * star * 0.008 * twinkle * step(HORIZON, s.y);
 
     // A full moon low over the end of the path; the gates pass in front of it.
@@ -110,7 +110,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let fog = exp(-z * 0.12);
         let fade = smoothstep(f32(GATES) * D, f32(GATES - 2) * D, z) * smoothstep(0.3, 1.1, z);
         // A kick's light reaches this gate when it has run z ahead.
-        let pulse = exp(-pow((z - u.kick_age * PULSE) / 1.2, 2.0)) * exp(-u.kick_age * 0.8);
+        let pulse = exp(-pow((z - q.kick_t * PULSE) / 1.2, 2.0)) * exp(-q.kick_t * 0.8);
         let lit = 0.004 + q.glow * 0.010 + pulse * 0.09;
 
         var gc = palette.colors[1].rgb * g.x * lit * (0.7 + 0.3 * rand2(vec2<f32>(k, 9.0)));
