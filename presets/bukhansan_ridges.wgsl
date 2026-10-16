@@ -31,11 +31,17 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let c = centered(p);
     let t = u.time;
     let q = params();
-    // 1 at dusk/dawn afterglow, 0 in the middle of the night.
-    let light = 0.5 + 0.5 * cos(q.day * TAU);
+    // The drums, or a Soba patch playing them; cv1 lifts the cloud shadow
+    let kick = drum(KICK);
+    let snare = drum(SNARE);
+    let hat = drum(HAT);
+    let groove = min(q.groove + max(u.cv[0], 0.0), 1.0);
+    // 1 at dusk/dawn afterglow, 0 in the middle of the night. cv2 turns
+    // the hour forward or back.
+    let light = 0.5 + 0.5 * cos((q.day + u.cv[1] * 0.25) * TAU);
     let night = 1.0 - light;
     // Cloud shadow in a breakdown.
-    let shade = 0.5 + 0.5 * q.groove;
+    let shade = 0.5 + 0.5 * groove;
 
     // Sky: afterglow pooling over the ridges under a deepening blue.
     let warm = palette.colors[1].rgb;
@@ -50,7 +56,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let sp = c + vec2<f32>(t * 0.002, 0.0);
     let star = stars(sp, 70.0, 0.35);
     let twinkle = 0.6 + 0.4 * sin(t * (2.0 + 6.0 * u.treble) + rand2(floor(sp * 70.0)) * TAU)
-        + u.hat * step(0.7, rand2(floor(sp * 70.0) + vec2<f32>(u.hat_count, 0.0))) * 1.2;
+        + hat.hit * step(0.7, rand2(floor(sp * 70.0) + vec2<f32>(hat.count, 0.0))) * 1.2;
     col = col + palette.colors[3].rgb * star * twinkle * night * night * 0.5 * smoothstep(0.3, 0.6, p.y);
 
     // A crescent moon, high on the right.
@@ -59,22 +65,22 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     col = col + palette.colors[3].rgb * (crescent * 0.9 + glow(length(mc) - 0.038, 0.06) * 0.03) * night;
 
     // Now and then a snare throws a meteor across the night sky.
-    let m = u.snare_count;
-    if (rand2(vec2<f32>(m, 3.0)) < 0.3 && u.snare_age < 0.7 && night > 0.3) {
+    let m = snare.count;
+    if (rand2(vec2<f32>(m, 3.0)) < 0.3 && snare.age < 0.7 && night > 0.3) {
         let start = vec2<f32>((rand2(vec2<f32>(m, 4.0)) - 0.3) * u.aspect * 0.8, 0.35 + 0.12 * rand2(vec2<f32>(m, 5.0)));
         let dir = normalize(vec2<f32>(-1.0, -0.45));
-        let head = start + dir * u.snare_age * 0.9;
+        let head = start + dir * snare.age * 0.9;
         let d = sd_segment(c, head - dir * 0.14, head);
         let along = clamp(dot(c - (head - dir * 0.14), dir) / 0.14, 0.0, 1.0);
-        let fade = (1.0 - u.snare_age / 0.7) * night;
+        let fade = (1.0 - snare.age / 0.7) * night;
         col = col + palette.colors[3].rgb * smoothstep(0.0025, 0.0, d) * along * along * fade * 1.5;
     }
 
     // Ridges, farthest first: each is darker at its crest and fades
     // downward into the mist pooled in the valley in front of the next.
-    let mist_amt = (0.3 + u.bass_att * 0.15 + u.kick * 0.55) * (0.6 + 0.4 * q.groove);
+    let mist_amt = (0.3 + u.bass_att * 0.15 + kick.hit * 0.55) * (0.6 + 0.4 * groove);
     // Lit mist: on a kick it glows with whatever light is in the sky.
-    let mist_glow = mix(palette.colors[3].rgb * 0.05, palette.colors[1].rgb * 0.09, light) * u.kick;
+    let mist_glow = mix(palette.colors[3].rgb * 0.05, palette.colors[1].rgb * 0.09, light) * kick.hit;
     for (var k = LAYERS - 1; k >= 0; k = k - 1) {
         let i = f32(k);
         let h = ridge_top(p.x, i);
@@ -86,7 +92,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
             // The afterglow catches the crests; a snare's light runs back
             // through the ranges, reaching ridge i after i × 70 ms.
             let crest = smoothstep(0.006, 0.0, h - p.y);
-            let wave = exp(-pow((u.snare_age - i * 0.07) * 18.0, 2.0)) * exp(-u.snare_age * 1.5);
+            let wave = exp(-pow((snare.age - i * 0.07) * 18.0, 2.0)) * exp(-snare.age * 1.5);
             let crest_light = mix(palette.colors[3].rgb, warm, light);
             col = col + warm * crest * light * (0.07 - atm * 0.05) * shade
                 + crest_light * crest * wave * (0.25 - atm * 0.12)

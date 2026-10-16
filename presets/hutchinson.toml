@@ -14,11 +14,16 @@ edge = "fade"
 #   hat    a glint runs around the ring
 #   groove (kicks flowing) without it the fall slows to a drift and the
 #          seed dims, so the attractor fades to embers until the drop
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 brightens the seed, cv2 turns the ring's
+# hue and cv3 quickens the fall and the morph. An empty lane changes nothing.
 [params]
-groove  = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-punch   = { follow = "kick", tau = 0.1 }
-snap    = { follow = "snare", tau = 0.1 }
-morph   = { rate = "0.006 + groove * 0.006 + mid_att * 0.006", wrap = 1.0 }
+kick_t  = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+groove  = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+punch   = { follow = "exp(-kick_t * 10)", tau = 0.1 }
+snap    = { follow = "exp(-mix(snare_age, gate2_age, link_live * step(0.5, gate2_count)) * 8.3)", tau = 0.1 }
+morph   = { rate = "0.006 + groove * 0.006 + mid_att * 0.006 + abs(cv3) * 0.01", wrap = 1.0 }
 wave    = "sin(morph * 6.2831853)"
 twist   = { follow = "0.32 * wave + mid * 0.04", tau = 0.3 }
 scale   = { follow = "0.49 + bass_att * 0.02 + punch * 0.05", tau = 0.08 }
@@ -28,7 +33,7 @@ cscale  = "0.40 + 0.08 * cos(morph * 6.2831853)"
 cweight = "0.55 - 0.45 * cos(morph * 6.2831853)"
 # The dive: one unit of `travel` falls exactly one level into a corner.
 # Kicks shove it deeper; each level picks the next corner.
-speed   = { follow = "0.04 + groove * 0.10 + bass_att * 0.08 + kick * 1.6", tau = 0.12 }
+speed   = { follow = "0.04 + groove * 0.10 + bass_att * 0.08 + exp(-kick_t * 10) * 1.6 + abs(cv3) * 0.3", tau = 0.12 }
 travel  = { rate = "speed" }
 dive    = "fract(travel)"
 corner  = "floor(travel) - 3 * floor(travel / 3)"

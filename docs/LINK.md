@@ -110,8 +110,15 @@ that's either; in a preset's TOML, the same switch is
 kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
 ```
 
-Han River, Jongno Rain, Hongsalmun, Window Within and Cheonggyecheon
-Lanterns follow it, and each says in its TOML what its lanes do. Soba's
+Presets drawn from the generic `beat` onset rather than a drum give
+gate 1 the beat instead, with a `pulse` param:
+
+```toml
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+```
+
+Every preset follows it (Gayageum and Obangsaek are link instruments of
+their own), and each says in its TOML what its lanes do. Soba's
 Pinwheel example plays it: kick, snare and hats on gates 1–3 and the
 downbeat on gate 4.
 

@@ -13,7 +13,8 @@ fn hash21(p: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
-    let t = u.time;
+    let q = params();
+    let t = q.wig;
 
     // Pixelate into square cells (100 rows) in aspect-corrected space,
     // then map each cell center back to UV for the path math.
@@ -33,7 +34,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // dither (every cell of the same parity is lit, regardless of position
     // in the blob — gives a flat fill, not a Gaussian fade). Perimeter gets
     // a pink-white outline.
-    let blob_half = 0.040 + u.bass * 0.020 + u.beat * 0.018;
+    let blob_half = 0.040 + u.bass * 0.020 + q.pulse * 0.018 + max(u.cv[0], 0.0) * 0.025;
     let edge_w = 0.005;
     let d = abs(p.x - line_x);
 
@@ -46,11 +47,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let checker = f32((i32(cell.x) + i32(cell.y)) & 1);
     let blue_lit = interior * checker;
 
-    let blue_contrib = palette.colors[1].rgb * blue_lit * 0.040;
+    let blue_contrib = max(hue_rotate(palette.colors[1].rgb, u.cv[1] * 1.2), vec3<f32>(0.0)) * blue_lit * 0.040;
 
     // Pink-white outline at the perimeter, full strength (no dither).
     let pinkish = mix(palette.colors[3].rgb, vec3<f32>(1.0, 0.86, 0.93), 0.35);
-    let edge_contrib = pinkish * on_edge * (0.08 + u.beat * 0.06);
+    let edge_contrib = pinkish * on_edge * (0.08 + q.pulse * 0.06);
 
     return vec4<f32>(blue_contrib + edge_contrib, 1.0);
 }

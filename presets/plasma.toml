@@ -2,10 +2,18 @@ name = "Plasma"
 author = "seoul"
 description = "Heavy warp, color-cycling sinusoidal fields."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that widens the
+# bands and flashes them gold. cv1 brightens the bands, cv2 turns their
+# colors and cv3 makes the fields flow faster. An empty lane changes
+# nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+flow  = { rate = "1 + abs(cv3) * 2" }
+
 [mapping]
 zoom        = "1.0 + bass * 0.03 + sin(time * 0.4) * 0.01"
 rotation    = "sin(time * 0.2) * 0.010 + mid * 0.008"
-warp_amount = "0.020 + beat * 0.045 + abs(sin(time * 0.7)) * 0.010"
+warp_amount = "0.020 + pulse * 0.045 + abs(sin(time * 0.7)) * 0.010"
 decay       = "0.970 + treble * 0.012"
 
 [shader]

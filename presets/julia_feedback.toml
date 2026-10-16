@@ -14,11 +14,17 @@ edge = "fade"
 #   hat    brightens the waveform thread woven through every orbit
 #   groove (kicks flowing) without it the walk slows, the seed dims and the
 #          set heals into calm lace
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 brightens the seed, cv2 turns its rings
+# and cv3 hurries c around the bulb. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-punch  = { follow = "kick", tau = 0.1 }
-snap   = { follow = "snare", tau = 0.12 }
-alpha  = { rate = "0.02 + groove * 0.05 + bass_att * 0.03", wrap = 6.2831853 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "exp(-kick_t * 10)", tau = 0.1 }
+snap   = { follow = "exp(-snare_t * 8.3)", tau = 0.12 }
+alpha  = { rate = "0.02 + groove * 0.05 + bass_att * 0.03 + abs(cv3) * 0.08", wrap = 6.2831853 }
 radius = { follow = "0.245 + punch * 0.06 + bass * 0.005", tau = 0.1 }
 cx     = "-1 + radius * cos(alpha)"
 cy     = "radius * sin(alpha)"
@@ -41,7 +47,7 @@ color3 = [0.90, 0.30, 0.25, 1.0]   # vermilion
 
 [post]
 bloom      = 0.5
-exposure   = "1.15 + groove * 0.25"
+exposure   = "1.15 + groove * 0.25 + max(cv1, 0) * 0.3"
 # Depth: a larger ghost of the set floats in front, swelling toward you with
 # the bass. (The warp can't zoom in: near the set, z² + c lands outside any
 # zoomed-in window, so the image would starve.)

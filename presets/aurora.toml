@@ -2,10 +2,18 @@ name = "Aurora"
 author = "seoul"
 description = "Slow vertical curtains drifting sideways, deep cool palette."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that lights
+# the crown and ripples the curtains. cv1 brightens the sky, cv2 turns the
+# curtains' green toward violet and cv3 sends them drifting faster. An
+# empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+drift = { rate = "1 + abs(cv3) * 3" }
+
 [mapping]
 zoom        = "1.0 + bass * 0.012"
 rotation    = "-0.002 + mid * 0.004"
-warp_amount = "0.008 + beat * 0.015"
+warp_amount = "0.008 + pulse * 0.015"
 decay       = "0.978 + treble * 0.008"
 
 [shader]

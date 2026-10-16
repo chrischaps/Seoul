@@ -29,11 +29,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
 
         let k = kali(p, c, 14);
         let density = k.x / 14.0;
-        gas = gas + cosine_palette(density * 0.6 + u.time * 0.006 + q.snap * 0.25, 0.15) * pow(density, 2.2) * weight;
+        gas = gas + cosine_palette(density * 0.6 + u.time * 0.006 + q.snap * 0.25 + u.cv[1] * 0.4, 0.15) * pow(density, 2.2) * weight;
         stars = stars + exp(-k.y * 28.0) * weight;
     }
 
-    let glow = 0.3 + 0.5 * q.groove + q.punch * 1.6;
-    let col = gas * 0.010 * glow + palette.colors[3].rgb * stars * (0.004 + u.hat * 0.03 + q.punch * 0.02);
+    let glow = 0.3 + 0.5 * q.groove + q.punch * 1.6 + max(u.cv[0], 0.0) * 0.6;
+    let col = gas * 0.010 * glow + palette.colors[3].rgb * stars * (0.004 + drum(HAT).hit * 0.03 + q.punch * 0.02);
     return vec4<f32>(col, 1.0);
 }

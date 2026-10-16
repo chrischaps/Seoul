@@ -57,17 +57,20 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let ring = smoothstep(0.02, 0.45, rad);
     let arm = (best_id - ARMS * floor(best_id / ARMS)) / ARMS;
     let note = spectrum_at(arm);
-    let hue = mix(palette.colors[0].rgb, mix(palette.colors[2].rgb, palette.colors[1].rgb, ring), 0.35 + 0.65 * ring);
+    // A Soba patch's cv2 turns the gold toward rose or green.
+    let hue = max(hue_rotate(mix(palette.colors[0].rgb, mix(palette.colors[2].rgb, palette.colors[1].rgb, ring), 0.35 + 0.65 * ring), u.cv[1] * 0.5), vec3<f32>(0.0));
 
     // Kicks ripple outward through the head.
-    let ripple_r = 0.02 * exp(u.kick_age * 5.0);
-    let ripple = exp(-pow((log(rad) - log(ripple_r)) * 2.5, 2.0)) * exp(-u.kick_age * 1.5);
+    let ripple_r = 0.02 * exp(q.kick_t * 5.0);
+    let ripple = exp(-pow((log(rad) - log(ripple_r)) * 2.5, 2.0)) * exp(-q.kick_t * 1.5);
 
-    let energy = 0.004 + q.groove * 0.016 + note * (0.015 + q.groove * 0.045) + ripple * 0.08 + q.hit * 0.012;
+    // cv1 lights the head
+    let lift = max(u.cv[0], 0.0);
+    let energy = 0.004 + (q.groove + lift) * 0.016 + note * (0.015 + q.groove * 0.045) + ripple * 0.08 + q.hit * 0.012;
     var col = hue * disk * dome * energy;
     // Snares: a burst of pollen, new seeds each hit. Hats: a few twinkle.
-    let burst = step(0.80, rand2(vec2<f32>(best_id, u.snare_count))) * q.clap;
-    let twinkle = step(0.95, rand2(vec2<f32>(best_id, u.hat_count + 0.5))) * q.tick;
+    let burst = step(0.80, rand2(vec2<f32>(best_id, drum(SNARE).count))) * q.clap;
+    let twinkle = step(0.95, rand2(vec2<f32>(best_id, drum(HAT).count + 0.5))) * q.tick;
     let glint = burst * 0.12 + twinkle * 0.06 + step(0.93, rand2(vec2<f32>(best_id, 3.0))) * q.pollen * 0.03;
     col = col + palette.colors[3].rgb * disk * pow(dome, 4.0) * glint;
 
@@ -90,6 +93,6 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         petals = max(petals, smoothstep(0.08, -0.08, d) * step(0.0, x) * step(x, 1.0) * shade);
     }
     let head = 1.0 - smoothstep(0.425, 0.44, pr);
-    col = col * head + mix(palette.colors[2].rgb, palette.colors[1].rgb, 0.7) * petals * (1.0 - head) * (0.008 + q.groove * 0.02 + q.hit * 0.012);
+    col = col * head + mix(palette.colors[2].rgb, palette.colors[1].rgb, 0.7) * petals * (1.0 - head) * (0.008 + (q.groove + lift) * 0.02 + q.hit * 0.012);
     return vec4<f32>(col, 1.0);
 }

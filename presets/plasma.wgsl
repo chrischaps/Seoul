@@ -11,7 +11,8 @@
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let p = centered(in.uv) * 2.0; // y in -1..1, x scaled by aspect
     let r = length(p);
-    let t = u.time;
+    let q = params();
+    let t = q.flow;
 
     let f0 = sin(p.x * 6.0 + t * 0.7);
     let f1 = cos(p.y * 5.0 + t * 0.5 + u.bass * 2.0);
@@ -19,12 +20,12 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let v = f0 + f1 + f2; // -3..3
 
     // Thin bright contours of the field; beats widen them.
-    let band = pow(0.5 + 0.5 * sin(v * 2.4 - t * 0.8), 10.0 - 5.0 * u.beat);
+    let band = pow(0.5 + 0.5 * sin(v * 2.4 - t * 0.8), 10.0 - 5.0 * q.pulse);
     // Magenta ↔ electric blue; gold flashes on beats (blue + gold would
     // average to olive, so they never share a band); mint stays in the core.
-    let hue = (0.5 + 0.5 * sin(v * 0.6 + t * 0.15)) * 0.34;
-    var col = palette_ramp(hue) * band * 0.026;
-    col = col + palette.colors[2].rgb * band * u.beat * 0.030;
+    let hue = (0.5 + 0.5 * sin(v * 0.6 + t * 0.15 + u.cv[1] * PI)) * 0.34;
+    var col = palette_ramp(hue) * band * (0.026 + max(u.cv[0], 0.0) * 0.02);
+    col = col + palette.colors[2].rgb * band * q.pulse * 0.030;
 
     // Sparse bright center that swells with bass
     let core = smoothstep(0.20 + u.bass * 0.10, 0.0, r);

@@ -14,12 +14,19 @@ description = "Falling into a sunflower's head: every seed is the one before it,
 # Spectrum: each spiral arm is a note, low on one arm and high on the next.
 # Groove (kicks flowing) keeps it streaming; in a breakdown the flow slows
 # to a crawl and the head dims to a dusk glow until the drop.
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lights the head, cv2 turns its gold toward
+# rose or green and cv3 speeds the stream. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-hit    = "exp(-kick_age * 6)"
-clap   = "exp(-snare_age * 5)"
-tick   = "exp(-hat_age * 14)"
-speed  = { follow = "1.5 + groove * (4 + bass_att * 8) + hit * 40", tau = 0.06 }
+kick_t  = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+hat_t   = "mix(hat_age, gate3_age, link_live * step(0.5, gate3_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_t * 6)"
+clap   = "exp(-snare_t * 5)"
+tick   = "exp(-hat_t * 14)"
+speed  = { follow = "1.5 + groove * (4 + bass_att * 8) + hit * 40 + abs(cv3) * 14", tau = 0.06 }
 travel = { rate = "speed" }
 spin   = { rate = "0.01 + groove * (0.02 + mid_att * 0.04)" }
 pollen = { follow = "treble", tau = 0.12 }

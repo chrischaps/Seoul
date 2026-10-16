@@ -2,10 +2,16 @@ name = "Lattice"
 author = "seoul"
 description = "Rectangular grid pulsing with bass, colors shifting cell by cell."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that bends the
+# grid and brightens its lines. cv1 lights the lines, cv2 turns the cells'
+# colors and cv3 spins the grid. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+
 [mapping]
 zoom        = "1.0 + bass * 0.030"
-rotation    = "0.002 + mid * 0.008"
-warp_amount = "0.004 + beat * 0.035"
+rotation    = "0.002 + mid * 0.008 + abs(cv3) * 0.008"
+warp_amount = "0.004 + pulse * 0.035"
 decay       = "0.958 + treble * 0.014"
 
 [shader]

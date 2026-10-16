@@ -17,11 +17,16 @@ decay       = "0.5"
 #   hat       glints on the sun's path across the water
 #   groove    while the kicks keep coming the sea runs high; in a kick-less
 #             breakdown it calms and the glitter fades, until the drop
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 raises the sea, cv2 warms (or cools) the
+# sunlight and cv3 hurries the day along. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
 # 0 → 1 is a whole day: dark at 0, the sun highest at 0.5. It starts before
 # dawn, so the first minute is the sunrise; the beat speeds it along.
-sun = { rate = "0.002 + groove * 0.005 + volume * 0.002", wrap = 1.0 }
+sun = { rate = "0.002 + groove * 0.005 + volume * 0.002 + abs(cv3) * 0.006", wrap = 1.0 }
 
 [shader]
 composite = "jeongdongjin_sunrise.wgsl"

@@ -66,8 +66,10 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // each generation lit by its own spectrum band.
     let parity = f32(generation % 2);
     let band = spectrum_at(clamp(g / 14.0, 0.0, 1.0));
-    let tile = mix(palette.colors[1].rgb, palette.colors[2].rgb, parity);
-    var col = tile * (0.001 + band * 0.008) * (0.3 + 0.7 * q.groove) * (1.0 / (1.0 + g * 0.15));
+    // cv1 lights the net as the groove does; cv2 turns the tiles' hue.
+    let lit = min(q.groove + max(u.cv[0], 0.0), 1.0);
+    let tile = max(hue_rotate(mix(palette.colors[1].rgb, palette.colors[2].rgb, parity), u.cv[1] * PI), vec3<f32>(0.0));
+    var col = tile * (0.001 + band * 0.008) * (0.3 + 0.7 * lit) * (1.0 / (1.0 + g * 0.15));
 
     // The central tile breathes with the kick.
     if (generation == 0) {
@@ -75,11 +77,12 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     }
 
     // A snare sends a wave of gold out through the generations.
-    let wave = exp(-pow(g - u.snare_age * 18.0, 2.0) * 0.5) * exp(-u.snare_age * 3.0);
+    let snare = drum(SNARE);
+    let wave = exp(-pow(g - snare.age * 18.0, 2.0) * 0.5) * exp(-snare.age * 3.0);
     col = col + palette.colors[2].rgb * wave * 0.02 * inside;
 
     // Pearl rims, flaring on the kick.
-    col = col + palette.colors[3].rgb * line * (0.012 + q.groove * 0.035 + q.shine * 0.05 + q.punch * 0.08);
+    col = col + palette.colors[3].rgb * line * (0.012 + lit * 0.035 + q.shine * 0.05 + q.punch * 0.08);
 
     // Outside the disk is the same net seen in reflection: keep it quiet.
     col = col * mix(0.15, 1.0, inside);

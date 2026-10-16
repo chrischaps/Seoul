@@ -3,6 +3,12 @@ author = "seoul"
 description = "Pale ink diffusing through dark water. Beats release clouds; a cinnabar thread traces the waveform."
 edge = "fade"
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that releases
+# the ink. cv1 swells the drop, cv2 tints the ink warm (cinnabar) or cool
+# (slate) and cv3 stirs the water. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+
 [mapping]
 zoom        = "1.0 + bass_att * 0.003"
 rotation    = "0.0"
@@ -25,7 +31,7 @@ bloom     = 0.25
 vignette  = 0.5
 grain     = 0.35
 saturation = 0.9
-chroma    = "beat * 0.6"
+chroma    = "pulse * 0.6"
 
 [particles]
 count      = 40000

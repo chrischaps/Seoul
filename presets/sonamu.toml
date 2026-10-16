@@ -14,16 +14,23 @@ edge = "fade"
 #   groove (kicks flowing) without it the wind drops, the walk slows to a
 #          stroll, the forest dims to ink and clouds cross the moon; the
 #          drop clears them
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lights the forest, cv2 warms (or, below
+# zero, cools) the moonlight and cv3 raises the wind and quickens the walk.
+# An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-gust   = { follow = "kick", tau = 0.18 }
-snap   = { follow = "snare", tau = 0.15 }
+kick_t  = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+gust   = { follow = "exp(-kick_t * 10)", tau = 0.18 }
+snap   = { follow = "exp(-snare_t * 8.3)", tau = 0.15 }
 spread = { follow = "0.36 + bass_att * 0.06 + gust * 0.04", tau = 0.2 }
-wind   = { follow = "0.01 + groove * 0.02 + mid * 0.04", tau = 0.5 }
+wind   = { follow = "0.01 + groove * 0.02 + mid * 0.04 + abs(cv3) * 0.04", tau = 0.5 }
 bend   = "0.04 + wind * sin(time * 1.1) + gust * 0.10"
-glow   = { follow = "0.3 + groove * 0.7", tau = 0.4 }
+glow   = { follow = "0.3 + groove * 0.7 + max(cv1, 0) * 0.6", tau = 0.4 }
 # The walk: one unit passes one tree. Kicks are strides.
-walk   = { rate = "0.02 + groove * 0.05 + bass_att * 0.04 + kick * 0.5" }
+walk   = { rate = "0.02 + groove * 0.05 + bass_att * 0.04 + exp(-kick_t * 10) * 0.5 + abs(cv3) * 0.08" }
 
 [mapping]
 zoom        = "1.001 + groove * 0.002 + gust * 0.006"

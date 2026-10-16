@@ -15,13 +15,13 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // carry different colors, which lands as rings in every preimage.
     let q = params();
     // On the snare the rings blush vermilion.
-    let hue = mix(palette_ramp(0.5 + 0.5 * sin(r * 14.0 - u.time * 0.6)), palette.colors[3].rgb, q.snap * 0.8);
+    let hue = mix(palette_ramp(0.5 + 0.5 * sin(r * 14.0 - u.time * 0.6 + u.cv[1] * PI)), palette.colors[3].rgb, q.snap * 0.8);
     let disk = smoothstep(0.32 + q.punch * 0.15, 0.0, r);
 
     // The waveform ring adds a thread of brighter light into every orbit.
     let wave = smoothstep(0.025, 0.0, abs(r - 0.9 - waveform_at(a) * 0.15));
 
-    let seed = 0.015 + q.groove * 0.025 + q.punch * 0.12 + q.snap * 0.04;
-    let col = hue * disk * seed + palette.colors[2].rgb * wave * (0.008 + u.hat * 0.04);
+    let seed = 0.015 + q.groove * 0.025 + q.punch * 0.12 + q.snap * 0.04 + max(u.cv[0], 0.0) * 0.03;
+    let col = hue * disk * seed + palette.colors[2].rgb * wave * (0.008 + drum(HAT).hit * 0.04);
     return vec4<f32>(col, 1.0);
 }

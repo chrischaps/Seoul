@@ -13,7 +13,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let line = step(min(abs(frac.x), abs(frac.y)), thickness);
 
     // Per-cell color index drifts — gives the grid a slow color "shimmer".
-    let cell_t = fract((cell.x * 0.13 + cell.y * 0.09) + u.time * 0.08);
+    let cell_t = fract((cell.x * 0.13 + cell.y * 0.09) + u.time * 0.08 + u.cv[1] * 0.5);
     let col_a = mix(palette.colors[0].rgb, palette.colors[1].rgb, cell_t);
     let col_b = mix(palette.colors[2].rgb, palette.colors[3].rgb, cell_t);
     let col = mix(col_a, col_b, step(0.5, cell_t));
@@ -22,6 +22,6 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let p = centered(in.uv);
     let vignette = 1.0 - smoothstep(0.35, 0.75, length(p));
 
-    let intensity = line * vignette * (0.025 + u.beat * 0.045);
+    let intensity = line * vignette * (0.025 + params().pulse * 0.045 + max(u.cv[0], 0.0) * 0.035);
     return vec4<f32>(col * intensity, 1.0);
 }

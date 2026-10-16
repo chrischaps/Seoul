@@ -23,9 +23,10 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // A thin inner outline, as painted dancheong edges in white.
     let outline = smoothstep(0.015, 0.0, abs(line - 0.12));
 
-    let ci = u32(abs(ring)) % 4u;
+    // cv2 hands each ring on to the next pigment, a step per quarter.
+    let ci = u32(abs(ring) + floor(abs(u.cv[1]) * 4.0)) % 4u;
     let fade = smoothstep(0.75, 0.15, r);
-    var col = palette.colors[ci].rgb * band * (0.08 + u.beat * 0.09);
+    var col = palette.colors[ci].rgb * band * (0.08 + params().pulse * 0.09 + max(u.cv[0], 0.0) * 0.06);
     col = col + vec3<f32>(0.95, 0.93, 0.86) * outline * (0.02 + u.treble * 0.03);
 
     // A lotus at the center that opens with the bass.

@@ -2,10 +2,13 @@ name = "Spectrum"
 author = "seoul"
 description = "Phase 2 spectrum bars and waveform line, with warped trails."
 
+# Soba link (docs/LINK.md): cv1 brightens the bars and the line, cv2 turns
+# the bars' colors and cv3 stirs the trails. An empty lane changes nothing.
+
 [mapping]
 zoom        = "1.0 + bass * 0.02"
 rotation    = "0.0"
-warp_amount = "0.003 + beat * 0.010"
+warp_amount = "0.003 + beat * 0.010 + abs(cv3) * 0.012"
 decay       = "0.955 + treble * 0.010"
 
 [shader]

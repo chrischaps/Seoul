@@ -2,10 +2,16 @@ name = "Kaleidoscope"
 author = "seoul"
 description = "Six-fold symmetric pattern, sharp triangular sectors, vibrant primaries."
 
+# Soba link (docs/LINK.md): once a patch plays gate 1, its kicks take over
+# the beat's flash and shimmer. cv1 adds sectors and light, cv2 turns the
+# colors and cv3 spins it faster. An empty lane changes nothing.
+[params]
+flash = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+
 [mapping]
 zoom        = "1.0 + bass * 0.04"
-rotation    = "0.012 + mid * 0.025"
-warp_amount = "0.005 + beat * 0.020"
+rotation    = "0.012 + mid * 0.025 + abs(cv3) * 0.03"
+warp_amount = "0.005 + flash * 0.020"
 decay       = "0.965 + treble * 0.012"
 
 [shader]

@@ -6,7 +6,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let r = length(p);
     let theta = atan2(p.y, p.x);
 
-    let sectors = 6.0 + floor(u.bass * 4.0);
+    let sectors = 6.0 + floor(u.bass * 4.0 + max(u.cv[0], 0.0) * 4.0);
     let sector = TAU / sectors;
     // Mirror inside each sector — produces clean kaleidoscope reflections.
     let local = abs(theta - sector * floor(theta / sector + 0.5));
@@ -17,7 +17,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
 
     // Pick color per stripe band
     let band = floor(stripe_phase * 0.5);
-    let t = fract(band * 0.27);
+    let t = fract(band * 0.27 + u.cv[1] * 0.5);
     let col_a = mix(palette.colors[0].rgb, palette.colors[1].rgb, t);
     let col_b = mix(palette.colors[2].rgb, palette.colors[3].rgb, t);
     let col_pick = mix(col_a, col_b, step(0.5, fract(band * 0.5)));
@@ -25,6 +25,6 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // Fade toward the rim so the center stays the focus
     let radial_fade = smoothstep(0.55, 0.05, r);
 
-    let intensity = stripe * radial_fade * (0.025 + u.beat * 0.030);
+    let intensity = stripe * radial_fade * (0.025 + params().flash * 0.030) * (1.0 + max(u.cv[0], 0.0) * 0.4);
     return vec4<f32>(col_pick * intensity, 1.0);
 }

@@ -18,11 +18,17 @@ decay       = "0.5"
 #   groove    while the kicks keep coming the sky glows and the day turns;
 #             in a kick-less breakdown cloud shadow dims the range and time
 #             slows, until the drop brings the light back
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lifts the cloud shadow and the mist, cv2
+# turns the hour (toward afterglow or toward night) and cv3 hurries the
+# day along. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
 # 0 → 1 is one day: afterglow at 0 and 1, deep night at 0.5. A day takes
 # about 1½–2 minutes while the music drives; it all but stops in a breakdown.
-day = { rate = "0.002 + groove * 0.008 + volume * 0.002", wrap = 1.0 }
+day = { rate = "0.002 + groove * 0.008 + volume * 0.002 + abs(cv3) * 0.02", wrap = 1.0 }
 
 [shader]
 composite = "bukhansan_ridges.wgsl"

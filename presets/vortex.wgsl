@@ -22,11 +22,14 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let t = clamp(r * 2.1, 0.0, 1.0);
     let col_mid = mix(palette.colors[3].rgb, palette.colors[2].rgb, smoothstep(0.0, 0.35, t));
     let col_outer = mix(palette.colors[1].rgb, palette.colors[0].rgb, smoothstep(0.35, 1.0, t));
-    let col_ramp = mix(col_mid, col_outer, smoothstep(0.3, 0.7, t));
+    // A Soba patch's cv2 turns the fire toward magenta or gold.
+    let col_ramp = max(hue_rotate(mix(col_mid, col_outer, smoothstep(0.3, 0.7, t)), u.cv[1] * 0.6), vec3<f32>(0.0));
+    // The beat, or a Soba patch's gate 1
+    let beat = params().pulse;
 
     let arms = col_ramp * arm_mask * mid_ring;
-    let blaze = palette.colors[3].rgb * core * (0.6 + u.beat * 0.6);
+    let blaze = palette.colors[3].rgb * core * (0.6 + beat * 0.6);
 
-    let intensity = 0.07 + u.bass * 0.04 + u.beat * 0.05;
+    let intensity = 0.07 + u.bass * 0.04 + beat * 0.05 + max(u.cv[0], 0.0) * 0.05;
     return vec4<f32>((arms + blaze) * intensity, 1.0);
 }

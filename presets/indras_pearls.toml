@@ -13,16 +13,22 @@ description = "Indra's net from Hwaeom Buddhism: every pearl reflects every othe
 #   hat    the rims glint
 #   groove (kicks flowing) without it the net loosens into dust, the glide
 #          slows and the tiles dim, until the drop pulls it shut again
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lights the net, cv2 turns the tiles' hue
+# and cv3 quickens the glide. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-punch  = { follow = "kick", tau = 0.1 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+hat_t  = "mix(hat_age, gate3_age, link_live * step(0.5, gate3_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "exp(-kick_t * 10)", tau = 0.1 }
 open   = { follow = "0.84 + groove * 0.08 + bass_att * 0.03 + punch * 0.10", tau = 0.08 }
-spin   = { rate = "0.01 + groove * 0.02 + mid_att * 0.02", wrap = 6.2831853 }
-orbit  = { rate = "0.03 + groove * 0.04 + bass_att * 0.04", wrap = 6.2831853 }
+spin   = { rate = "0.01 + groove * 0.02 + mid_att * 0.02 + abs(cv3) * 0.05", wrap = 6.2831853 }
+orbit  = { rate = "0.03 + groove * 0.04 + bass_att * 0.04 + abs(cv3) * 0.15", wrap = 6.2831853 }
 reach  = { follow = "0.22 + mid_att * 0.25", tau = 1.2 }
 ax     = "reach * cos(orbit)"
 ay     = "reach * sin(orbit)"
-shine  = { follow = "treble * 0.4 + hat * 0.8", tau = 0.08 }
+shine  = { follow = "treble * 0.4 + exp(-hat_t * 20) * 0.8", tau = 0.08 }
 # Kicks and bass draw the view down toward the rim (up to ~12×) and quiet
 # lets it float back out; `aim` slowly picks which stretch of the necklace.
 dive   = { follow = "groove * 0.8 + bass_att * 1.2 + punch * 0.8", tau = 0.5 }
@@ -45,7 +51,7 @@ color3 = [0.95, 0.93, 0.98, 1.0]   # pearl
 
 [post]
 bloom      = 0.7
-exposure   = "0.85 + groove * 0.2"
+exposure   = "0.85 + min(groove + max(cv1, 0), 1) * 0.2"
 bloom_threshold = 0.3
 vignette   = 0.4
 grain      = 0.06

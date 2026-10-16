@@ -2,10 +2,18 @@ name = "Constellations"
 author = "seoul"
 description = "Dark field of twinkling stars, sparse, beat-triggered flashes."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that flashes
+# the stars blue-white. cv1 brightens the sky and brings out more stars,
+# cv2 turns the field warm (or, below zero, cool) and cv3 quickens the
+# twinkle and the turn of the sky. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+twinkle = { rate = "1 + abs(cv3) * 2.5" }
+
 [mapping]
 zoom        = "1.0 + bass * 0.004"
-rotation    = "0.0003 + mid * 0.0006"
-warp_amount = "0.0004 + beat * 0.002"
+rotation    = "0.0003 + mid * 0.0006 + abs(cv3) * 0.0015"
+warp_amount = "0.0004 + pulse * 0.002"
 decay       = "0.930 + treble * 0.010"
 
 [shader]

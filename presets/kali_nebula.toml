@@ -11,14 +11,20 @@ description = "Kali's fold, |p|/|p|² − c, repeated until it blooms into nebul
 #   hat    the stars twinkle
 #   groove (kicks flowing) without it the flight coasts and the gas cools
 #          and dims, so the drop launches you forward again
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 lights the gas, cv2 turns its colors and
+# cv3 speeds the flight. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-punch  = { follow = "kick", tau = 0.1 }
-snap   = { follow = "snare", tau = 0.15 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "exp(-kick_t * 10)", tau = 0.1 }
+snap   = { follow = "exp(-snare_t * 8.3)", tau = 0.15 }
 cx     = { follow = "0.62 + mid_att * 0.10 - treble_att * 0.05", tau = 1.5 }
 cy     = { follow = "0.52 + bass_att * 0.06", tau = 1.5 }
 # Flight speed: one unit passes through one octave of depth (×5 zoom).
-fly    = { rate = "0.02 + groove * 0.06 + bass_att * 0.04 + kick * 0.9" }
+fly    = { rate = "0.02 + groove * 0.06 + bass_att * 0.04 + exp(-kick_t * 10) * 0.9 + abs(cv3) * 0.15" }
 turn   = { rate = "0.005 + groove * 0.01" }
 depth  = { follow = "1.25 - bass_att * 0.15 - punch * 0.15", tau = 0.15 }
 

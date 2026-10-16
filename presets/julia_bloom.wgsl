@@ -38,7 +38,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     if (j.z > 0.5) {
         // Outside: brightness climbs toward the boundary; hue cycles with depth.
         let glow = pow(clamp(n / 96.0 * 2.5, 0.0, 1.0), 2.2);
-        let hue = cosine_palette(n * 0.11 + u.time * 0.012 + q.snap * 0.3, 0.35);
+        let hue = cosine_palette(n * 0.11 + u.time * 0.012 + q.snap * 0.3 + u.cv[1] * 0.5, 0.35);
         // A faint field of color far out, rising to the bright rim, which
         // flares on the kick and dims when the kicks stop.
         let energy = 0.2 + 0.8 * q.groove * q.groove + q.punch * 1.4;

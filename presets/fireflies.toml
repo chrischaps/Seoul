@@ -2,11 +2,14 @@ name = "Fireflies"
 author = "seoul"
 description = "A summer field after dark: fireflies drift on slow eddies and blink in and out; the bass stirs them."
 
+# Soba link (docs/LINK.md): cv1 brightens the field and thickens the mist,
+# cv2 warms the mist from green toward amber, and cv3 lifts the swarm so
+# its trails rise. An empty lane changes nothing.
 [mapping]
 zoom        = "1.0"
 rotation    = "0.0"
 warp_amount = "0.0"
-dy          = "-0.0002"
+dy          = "-0.0002 - abs(cv3) * 0.0005"
 decay       = "0.80"
 
 [shader]
@@ -33,7 +36,8 @@ bass_push  = 0.0
 intensity  = 0.45
 
 [post]
-bloom           = 0.9
+bloom           = "0.9 + max(cv1, 0) * 0.5"
+exposure        = "1.0 + max(cv1, 0) * 0.3"
 bloom_threshold = 0.25
 vignette        = 0.5
 grain           = 0.3

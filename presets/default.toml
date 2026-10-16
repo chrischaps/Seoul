@@ -2,10 +2,17 @@ name = "Default"
 author = "seoul"
 description = "Gentle feedback with a pulsing ring, beat spokes, and waveform curl."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that flashes
+# the ring and the spokes. cv1 brightens them, cv2 turns the ring's hue and
+# cv3 spins the picture faster. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+spin = { rate = "0.3 + abs(cv3) * 1.5" }
+
 [mapping]
 zoom        = "1.0 + bass * 0.05"
-rotation    = "0.008 + mid * 0.015"
-warp_amount = "0.010 + beat * 0.030"
+rotation    = "0.008 + mid * 0.015 + abs(cv3) * 0.02"
+warp_amount = "0.010 + pulse * 0.030"
 decay       = "0.960 + treble * 0.015"
 
 [shader]

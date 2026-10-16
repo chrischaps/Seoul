@@ -5,18 +5,23 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let r = length(p);
     let theta = atan2(p.y, p.x);
 
+    let q = params();
+    // The beat, or a Soba patch's kick; cv1 adds energy
+    let pulse = q.pulse;
+    let energy = max(u.cv[0], 0.0);
+
     var col = vec3<f32>(0.0);
 
     // Pulsing ring
     let ring_r = 0.16 + u.bass * 0.14;
     let ring = smoothstep(0.014, 0.0, abs(r - ring_r));
-    let ring_col = mix(palette.colors[0].rgb, palette.colors[1].rgb, u.mid);
-    col = col + ring * ring_col * (0.20 + u.beat * 0.25);
+    let ring_col = max(hue_rotate(mix(palette.colors[0].rgb, palette.colors[1].rgb, u.mid), u.cv[1] * PI), vec3<f32>(0.0));
+    col = col + ring * ring_col * (0.20 + pulse * 0.25 + energy * 0.15);
 
     // Radial spokes on beat
-    let spokes = abs(sin(theta * 8.0 + u.time * 0.3));
+    let spokes = abs(sin(theta * 8.0 + q.spin));
     let spoke_fade = smoothstep(0.45, 0.0, r);
-    col = col + u.beat * spokes * spoke_fade * palette.colors[2].rgb * 0.10;
+    col = col + (pulse + energy * 0.4) * spokes * spoke_fade * palette.colors[2].rgb * 0.10;
 
     // Waveform curl
     let sample = waveform_at(theta);

@@ -2,11 +2,17 @@ name = "LED Wall"
 author = "seoul"
 description = "A mirrored spectrum poured into a dot-matrix LED panel, after the one in ref/."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that flashes
+# the rim. cv1 lifts the blob, cv2 turns its colors and cv3 sends the
+# echoes out faster. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+
 [mapping]
 zoom        = "1.0"
 rotation    = "0.0"
 warp_amount = "0.0"
-sy          = "1.004 + bass * 0.004"
+sy          = "1.004 + bass * 0.004 + abs(cv3) * 0.006"
 decay       = "0.88"
 
 [shader]

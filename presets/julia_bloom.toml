@@ -10,21 +10,29 @@ description = "A Julia set riding the rim of the Mandelbrot heart; every kick sh
 #   hat    a fine shimmer in the filigree
 #   groove (kicks flowing) without it, in breakdowns, the fall slows to a
 #          drift and the set dims and cools
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 quickens the fall and brightens the set,
+# cv2 turns its colors and cv3 hurries c around the rim. An empty lane
+# changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-punch  = { follow = "kick", tau = 0.08 }
-snap   = { follow = "snare", tau = 0.1 }
-theta  = { rate = "0.02 + groove * 0.03 + bass_att * 0.03", wrap = 6.2831853 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+hat_t = "mix(hat_age, gate3_age, link_live * step(0.5, gate3_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+punch  = { follow = "exp(-kick_t * 10)", tau = 0.08 }
+snap   = { follow = "exp(-snare_t * 8.3)", tau = 0.1 }
+theta  = { rate = "0.02 + groove * 0.03 + bass_att * 0.03 + abs(cv3) * 0.06", wrap = 6.2831853 }
 push   = { follow = "0.985 + punch * 0.07 + bass * 0.01", tau = 0.12 }
 # Skip the cusp (θ near 0), where the dive's fixed point stops repelling.
 ang    = "0.5 + theta * 0.8408"
 cx     = "(cos(ang) * 0.5 - cos(2 * ang) * 0.25) * push"
 cy     = "(sin(ang) * 0.5 - sin(2 * ang) * 0.25) * push"
 spin   = { rate = "0.01 + groove * 0.02 + mid_att * 0.02" }
-trap   = { follow = "treble * 0.5 + hat * 0.6", tau = 0.08 }
+trap   = { follow = "treble * 0.5 + exp(-hat_t * 20) * 0.6", tau = 0.08 }
 # The dive: one unit falls exactly one level into the Julia set, spiraling
 # into its repelling fixed point. Kicks shove it a level deeper.
-speed  = { follow = "0.05 + groove * 0.12 + bass_att * 0.15 + kick * 2.2", tau = 0.12 }
+speed  = { follow = "0.05 + groove * 0.12 + bass_att * 0.15 + exp(-kick_t * 10) * 2.2 + max(cv1, 0) * 0.3", tau = 0.12 }
 dive   = { rate = "speed", wrap = 1.0 }
 
 [mapping]
@@ -46,7 +54,7 @@ color3 = [0.96, 0.92, 0.84, 1.0]   # bone
 [post]
 bloom      = 0.55
 # The whole picture settles a little in breakdowns.
-exposure   = "0.85 + groove * 0.2"
+exposure   = "0.85 + groove * 0.2 + max(cv1, 0) * 0.25"
 saturation = 1.25
 vignette = 0.35
 grain    = 0.08

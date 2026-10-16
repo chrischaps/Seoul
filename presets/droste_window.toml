@@ -26,7 +26,7 @@ groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
 hit    = "exp(-kick_t * 6)"
 clap   = "exp(-snare_t * 4)"
 tick   = "exp(-hat_t * 14)"
-speed  = { follow = "0.03 + groove * (0.05 + bass_att * 0.12) + hit * 0.7 + abs(cv3) * 0.3", tau = 0.06 }
+speed  = { follow = "0.06 + groove * (0.11 + bass_att * 0.24) + hit * 1.1 + abs(cv3) * 0.5", tau = 0.06 }
 dive   = { rate = "speed", wrap = 1.0 }
 spin   = { rate = "0.006 + groove * (0.01 + mid_att * 0.02)" }
 lamp   = "0.24 + groove * 0.46 + hit * 0.5 + max(cv1, 0) * 0.3"
@@ -34,7 +34,7 @@ warm   = { follow = "max(mid_att + cv2, 0)", tau = 1.5 }
 shim   = { follow = "treble", tau = 0.1 }
 
 [mapping]
-zoom        = "1.002 + hit * 0.006"
+zoom        = "1.003 + groove * 0.003 + hit * 0.009"
 rotation    = "0"
 warp_amount = "0"
 decay       = "0.84"

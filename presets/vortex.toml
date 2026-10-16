@@ -2,10 +2,16 @@ name = "Vortex"
 author = "seoul"
 description = "Counter-rotating spiral arms expanding outward, hot reds and oranges."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that flares the
+# core. cv1 stokes the fire, cv2 turns its colors toward magenta or gold and
+# cv3 winds the vortex faster. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+
 [mapping]
 zoom        = "0.975 - bass * 0.015"
-rotation    = "-0.020 - mid * 0.030"
-warp_amount = "0.008 + beat * 0.025"
+rotation    = "-0.020 - mid * 0.030 - abs(cv3) * 0.03"
+warp_amount = "0.008 + pulse * 0.025"
 decay       = "0.970 + treble * 0.010"
 
 [shader]

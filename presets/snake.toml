@@ -2,6 +2,13 @@ name = "Snake"
 author = "seoul"
 description = "Pixelated string wiggling across the screen, leaving a dithered trail."
 
+# Soba link (docs/LINK.md): a patch's gate 1 plays the beat that fattens
+# the snake and flashes its outline. cv1 fattens it further, cv2 turns its
+# blue and cv3 makes it wiggle faster. An empty lane changes nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+wig   = { rate = "1 + abs(cv3) * 2" }
+
 [mapping]
 zoom        = "1.0"
 rotation    = "0.0"

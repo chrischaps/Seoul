@@ -74,13 +74,13 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let de_px = m.y / px;
         let wire = exp(-de_px * 0.6);
         let halo = exp(-de_px * 0.04);
-        let hue = cosine_palette(n * 0.045 + q.hue, 0.2);
+        let hue = cosine_palette(n * 0.045 + q.hue + u.cv[1] * 0.5, 0.2);
         // Breakdowns cool the glow toward the palette's blue.
         let tint = mix(palette.colors[1].rgb, hue, 0.4 + 0.6 * q.groove);
-        col = col + tint * halo * (0.007 + 0.009 * q.groove + q.hit * 0.008);
+        col = col + tint * halo * (0.007 + 0.009 * q.groove + q.hit * 0.008 + max(u.cv[0], 0.0) * 0.008);
         // Hats: sparks travel along the filaments, each hit a new pattern.
-        let spark = step(0.86, vnoise(vec2<f32>(n * 3.0 - u.time * 6.0, u.hat_count * 1.7))) * q.tick;
-        let flare = 0.006 + q.groove * 0.004 + q.shine * 0.02 + q.hit * 0.05 + spark * 0.06;
+        let spark = step(0.86, vnoise(vec2<f32>(n * 3.0 - u.time * 6.0, drum(HAT).count * 1.7))) * q.tick;
+        let flare = 0.006 + q.groove * 0.004 + q.shine * 0.02 + max(u.cv[0], 0.0) * 0.012 + q.hit * 0.05 + spark * 0.06;
         col = col + mix(palette.colors[3].rgb, hue, 0.55) * wire * flare;
     }
     return vec4<f32>(col, 1.0);

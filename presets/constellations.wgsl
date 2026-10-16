@@ -12,11 +12,12 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let cell = floor(g);
     let local = fract(g) - vec2<f32>(0.5);
 
+    let q = params();
     let h1 = hash2(cell);
     let h2 = hash2(cell + vec2<f32>(7.0, 13.0));
 
-    // Star presence: ~3% of cells
-    let star_on = step(0.97, h1);
+    // Star presence: ~3% of cells, up to ~7% as cv1 rises
+    let star_on = step(0.97 - max(u.cv[0], 0.0) * 0.04, h1);
 
     // Star can sit slightly off-cell-center (random jitter)
     let jitter = vec2<f32>(h2, fract(h2 * 3.17)) * 0.3 - 0.15;
@@ -27,16 +28,17 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let halo = smoothstep(0.16, 0.0, d) * 0.35;
 
     // Per-star twinkle phase
-    let twinkle_phase = u.time * (2.0 + h2 * 4.0) + h1 * TAU;
+    let twinkle_phase = q.twinkle * (2.0 + h2 * 4.0) + h1 * TAU;
     let twinkle = 0.4 + 0.6 * (0.5 + 0.5 * sin(twinkle_phase));
 
     // Color pick: most stars are cool white, some warm, rare beat-flash blue
-    let warm = step(0.6, h2);
+    // cv2 warms the field (more amber stars) or cools it.
+    let warm = step(0.6 - u.cv[1] * 0.45, h2);
     let col_base = mix(palette.colors[1].rgb, palette.colors[2].rgb, warm);
-    let col = mix(col_base, palette.colors[3].rgb, u.beat * 0.5);
+    let col = mix(col_base, palette.colors[3].rgb, q.pulse * 0.5);
 
     let brightness =
-        star_on * (core + halo) * twinkle * (0.35 + u.treble * 0.4 + u.beat * 0.4);
+        star_on * (core + halo) * twinkle * (0.35 + u.treble * 0.4 + q.pulse * 0.4 + max(u.cv[0], 0.0) * 0.3);
 
     // A faint drifting nebula behind the stars, in the palette's night blue.
     let c = centered(in.uv);

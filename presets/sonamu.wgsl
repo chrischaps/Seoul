@@ -55,6 +55,8 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let p0 = centered(in.uv);
     let px = 1.0 / u.resolution.y;
 
+    // The hats, or a Soba patch playing them
+    let hat = drum(HAT);
     var col = vec3<f32>(0.0);
     var cover = 0.0;
     for (var i = 0; i < TREES; i = i + 1) {
@@ -82,7 +84,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let leaf_mask = smoothstep(0.012 / z, 0.0, tuft);
 
         let w = haze * near;
-        let glitter = step(0.985, rand2(floor(local * 160.0) + vec2<f32>(u.hat_count, id))) * u.hat;
+        let glitter = step(0.985, rand2(floor(local * 160.0) + vec2<f32>(hat.count, id))) * hat.hit;
         col = col + palette.colors[1].rgb * wood_mask * (0.012 + q.glow * 0.012) * w;
         col = col + palette.colors[2].rgb * leaf_mask * (0.006 + q.glow * 0.018 + q.gust * 0.09 + glitter * 0.4) * w;
         cover = max(cover, max(wood_mask, leaf_mask) * haze);
@@ -96,8 +98,11 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     // Kicks make the moonlight breathe; a snare sends a ring of light out.
     let cloud = smoothstep(0.35, 0.75, fbm(mp * vec2<f32>(4.0, 9.0) + vec2<f32>(u.time * 0.05, 0.0)));
     let veil = 1.0 - (1.0 - q.groove) * (0.35 + 0.6 * cloud);
-    let ring = exp(-pow((length(mp) - 0.13 - u.snare_age * 0.6) / 0.012, 2.0)) * exp(-u.snare_age * 3.0);
-    col = col + palette.colors[3].rgb * ((moon * 0.010 * (1.0 + q.gust * 0.5) + halo * (0.002 + q.gust * 0.016)) * veil + ring * 0.01) * (1.0 - cover);
+    let sa = drum(SNARE).age;
+    let ring = exp(-pow((length(mp) - 0.13 - sa * 0.6) / 0.012, 2.0)) * exp(-sa * 3.0);
+    // cv2 warms the moonlight toward amber, or cools it toward blue.
+    let moonlight = max(palette.colors[3].rgb * vec3<f32>(1.0 + u.cv[1] * 0.2, 1.0 - abs(u.cv[1]) * 0.08, 1.0 - u.cv[1] * 0.35), vec3<f32>(0.0));
+    col = col + moonlight * ((moon * 0.010 * (1.0 + q.gust * 0.5) + halo * (0.002 + q.gust * 0.016)) * veil + ring * 0.01) * (1.0 - cover);
 
     // A faint moonlit path toward the horizon.
     let ground = smoothstep(HORIZON, HORIZON - 0.5, p0.y);

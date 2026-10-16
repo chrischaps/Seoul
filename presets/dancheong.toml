@@ -2,9 +2,17 @@ name = "Dancheong"
 author = "seoul"
 description = "Petal bands in the palette of Korean palace eaves, stepping outward on every beat, folded eight ways."
 
+# Soba link (docs/LINK.md): the rings step outward on beat_phase, which
+# follows Soba's clock while a patch plays. Gate 1 plays the beat that
+# brightens the bands. cv1 brightens the pigments, cv2 steps each ring on
+# to the next pigment and cv3 turns the eaves. An empty lane changes
+# nothing.
+[params]
+pulse = "mix(beat, exp(-gate1_age * 10), link_live * step(0.5, gate1_count))"
+
 [mapping]
 zoom        = "1.004 + bass * 0.006"
-rotation    = "0.0015 * sin(time * 0.2)"
+rotation    = "0.0015 * sin(time * 0.2) + abs(cv3) * 0.006"
 warp_amount = "0.0"
 decay       = "0.90"
 
@@ -20,7 +28,7 @@ color3 = [0.90, 0.66, 0.25, 1.0]   # hwangto ochre
 
 [post]
 mirror     = "kaleido:8"
-chroma     = "beat * 0.35"
+chroma     = "pulse * 0.35"
 saturation = 1.2
 bloom      = 0.4
 vignette   = 0.45

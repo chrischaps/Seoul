@@ -12,19 +12,26 @@ description = "An endless fall into the Mandelbrot set, toward a point where thr
 # Hats: sparks run along the filaments.
 # Groove (kicks flowing) keeps the fall going; in a breakdown it slows to
 # a drift and the glow cools and dims until the drop.
+#
+# Soba link (docs/LINK.md): a patch's gate 1 plays the kick, gate 2 the
+# snare and gate 3 the hats. cv1 brightens the filaments, cv2 turns their
+# colors and cv3 hurries the fall. An empty lane changes nothing.
 [params]
-groove = { follow = "step(kick_age, 1.1 * 60 / bpm)", tau = 0.35 }
-hit    = "exp(-kick_age * 7)"
-clap   = "exp(-snare_age * 5)"
-tick   = "exp(-hat_age * 14)"
-speed  = { follow = "0.03 + groove * (0.07 + bass_att * 0.12) + hit * 0.9", tau = 0.06 }
+kick_t = "mix(kick_age, gate1_age, link_live * step(0.5, gate1_count))"
+snare_t = "mix(snare_age, gate2_age, link_live * step(0.5, gate2_count))"
+hat_t = "mix(hat_age, gate3_age, link_live * step(0.5, gate3_count))"
+groove = { follow = "step(kick_t, 1.1 * 60 / bpm)", tau = 0.35 }
+hit    = "exp(-kick_t * 7)"
+clap   = "exp(-snare_t * 5)"
+tick   = "exp(-hat_t * 14)"
+speed  = { follow = "0.07 + groove * (0.17 + bass_att * 0.26) + hit * 1.4 + abs(cv3) * 0.6", tau = 0.06 }
 dive   = { rate = "speed", wrap = 1.0 }
 spin   = { rate = "0.01 + groove * (0.015 + mid_att * 0.03)" }
 shine  = { follow = "treble", tau = 0.15 }
 hue    = { rate = "0.006 + clap * 0.5" }
 
 [mapping]
-zoom        = "1.002 + groove * 0.002 + hit * 0.008"
+zoom        = "1.003 + groove * 0.004 + hit * 0.012"
 rotation    = "0"
 warp_amount = "0"
 decay       = "0.86"

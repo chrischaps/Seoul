@@ -5,6 +5,8 @@
 fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
     let uv = in.uv;
     var col = vec3<f32>(0.0);
+    // A Soba patch's cv1 lifts the light
+    let lift = 1.0 + max(u.cv[0], 0.0) * 1.2;
 
     if (uv.y < 0.5) {
         let idx_f = clamp(uv.x, 0.0, 0.9999) * 64.0;
@@ -16,9 +18,10 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
 
         if (uv.y < bar_top && in_bar > 0.5) {
             let t = f32(idx) / 63.0;
-            let bar_col = mix(palette.colors[0].rgb, palette.colors[1].rgb, t);
+            // cv2 turns the bars' colors
+            let bar_col = max(hue_rotate(mix(palette.colors[0].rgb, palette.colors[1].rgb, t), u.cv[1] * PI), vec3<f32>(0.0));
             let shade = 0.7 + 0.3 * (uv.y / max(bar_top, 1e-4));
-            col = bar_col * shade * 0.10;
+            col = bar_col * shade * 0.10 * lift;
         }
     } else {
         let idx_f = clamp(uv.x, 0.0, 0.9999) * 512.0;
@@ -28,7 +31,7 @@ fn fs_composite(in: Varying) -> @location(0) vec4<f32> {
         let y_target = 0.75 + sample * 0.18;
         let d = abs(uv.y - y_target);
         let line = smoothstep(0.006, 0.0, d);
-        col = palette.colors[2].rgb * line * 0.22;
+        col = palette.colors[2].rgb * line * 0.22 * lift;
     }
 
     return vec4<f32>(col, 1.0);
