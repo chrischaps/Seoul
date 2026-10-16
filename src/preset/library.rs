@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use arrayvec::ArrayVec;
 use notify::RecommendedWatcher;
 use rand::RngExt;
+use rand::seq::SliceRandom;
 use tracing::{info, warn};
 
 use crate::audio::AudioFeatures;
@@ -119,6 +120,8 @@ pub struct PresetLibrary {
     settings: LibrarySettings,
     curation: Curation,
     bag: ShuffleBag,
+    /// The deck Space and Backspace walk: every preset once, shuffled.
+    deck: Vec<usize>,
     /// Fixed playing order (by index) used instead of the shuffle bag.
     sequence: Vec<usize>,
     sequence_pos: usize,
@@ -208,6 +211,7 @@ impl PresetLibrary {
             settings,
             curation,
             bag: ShuffleBag::default(),
+            deck: Vec::new(),
             sequence: Vec::new(),
             sequence_pos: 0,
             style_cursor: 0,
@@ -322,6 +326,7 @@ impl PresetLibrary {
                     None => {
                         self.presets.push(preset);
                         self.bag.clear();
+                        self.deck.clear();
                     }
                 }
                 self.last_error = None;
@@ -359,6 +364,7 @@ impl PresetLibrary {
         }
         let p = self.presets.remove(idx);
         self.bag.clear();
+        self.deck.clear();
         info!(preset = p.spec.name, "preset removed");
     }
 
@@ -441,14 +447,36 @@ impl PresetLibrary {
         self.state.begin_transition(target, style, seed);
     }
 
-    /// Step through the library in order, skipping hidden presets.
+    /// Deal a fresh shuffle of the whole library with `current` on top,
+    /// so a walk from it reaches every other preset before the next deal.
+    fn deal(&mut self, current: usize) {
+        self.deck = (0..self.presets.len()).filter(|&i| i != current).collect();
+        self.deck.shuffle(&mut rand::rng());
+        self.deck.insert(0, current);
+    }
+
+    /// Step through the shuffled deck, skipping hidden presets. Walking off
+    /// the end deals a new shuffle, so the order never repeats, while
+    /// stepping back retraces what was just shown.
     fn step(&mut self, dir: isize) {
         let n = self.presets.len() as isize;
-        let mut idx = self.state.destination() as isize;
+        let current = self.state.destination();
+        if self.deck.len() != n as usize {
+            self.deal(current);
+        }
+        // A jump (R, a favorite) lands anywhere in the deck; carry on from there.
+        let mut pos = self.deck.iter().position(|&i| i == current).unwrap_or(0) as isize;
         for _ in 0..n {
-            idx = (idx + dir).rem_euclid(n);
-            if self.visible(idx as usize) {
-                self.go(idx as usize);
+            pos += dir;
+            if pos >= n {
+                self.deal(current);
+                pos = 1.min(n - 1);
+            } else if pos < 0 {
+                pos = n - 1;
+            }
+            let idx = self.deck[pos as usize];
+            if self.visible(idx) {
+                self.go(idx);
                 return;
             }
         }

@@ -26,7 +26,7 @@ keeps its presets, settings and screenshots in
 
 | Key | |
 |---|---|
-| Space / Backspace | next / previous preset |
+| Space / Backspace | next / previous preset, in an order reshuffled each lap |
 | R · A · L | shuffle · auto-advance · lock |
 | F · 1–9 · X | favorite · jump to favorite · hide |
 | H · F1 · P | help · stats · screenshot |
