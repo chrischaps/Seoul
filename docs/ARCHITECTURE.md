@@ -126,42 +126,47 @@ everything that reads it:
 
 1. **Noise floor per bin.** Each bin's power is smoothed (τ 100 ms) and a
    floor is tracked beneath it: it falls toward quieter moments (τ 0.5 s)
-   and creeps up under steady sound at 0.2 dB/s. The first 0.5 s primes it
-   (the window has only just filled), and digital silence — a muted mic —
-   holds it rather than teaching it zero. 1.5× the floor is subtracted from
-   every bin's power before bands, spectrum and onsets see it. The same
-   tracker on the frame's mean square gives `presence`, the fraction of the
-   frame that is signal (0..1).
-2. **Gain, lifted or cut.** A level follower on the cleaned signal's loud
-   parts (rise 1 s, fall 20 s, updated only while `presence` > 0.5) sets a
-   target that would lift them to −12 dBFS; the gain is that target capped
-   so the room's noise floor (its loudest band) sits 3 dB *under* the
-   analysis floor, and cut when a hot mic needs it (−40…+36 dB, easing
-   over ~3 s up and 0.5 s down). Every absolute threshold downstream then
-   means "above the room", whatever the mic's gain.
+   and rises under steady sound at a rate set by whether anything is
+   happening. The room is what doesn't change: after 3 s with no detected
+   onset (a fan switching on) it rises at 1 dB/s; while onsets keep coming
+   it creeps at 0.05 dB/s, so a record's pad and bassline aren't taken for
+   the room. The first 0.5 s primes it (the window has only just filled),
+   and digital silence — a muted mic — holds it rather than teaching it
+   zero. 1.5× the floor is subtracted from every bin's power before bands,
+   spectrum and onsets see it. `presence` is the share of the smoothed
+   power above that (0..1, square-rooted); a single hop's power swings too
+   far above its floor to tell the room from music.
+2. **Gain, lifted or cut.** The gain puts the room's noise floor (its
+   loudest band) 3 dB *under* the analysis floor: lifting a quiet mic,
+   cutting a hot one (−40…+36 dB, easing over ~3 s up and 0.5 s down).
+   Every absolute threshold downstream then means "above the room",
+   whatever the mic's gain. It depends on the room alone, so loud talk
+   can't hold it down for the record that follows.
 3. **The spectrum is measured against the room.** The direct feed's
    absolute scale (a −35 dB reference floor) doesn't carry over: a room's
    music sits 30–40 dB lower per bin than in its bands, which sum many
    bins, and its noise piles up at one end. Each of the 64 bins instead
    shows its smoothed power over its learned floor, mapped from 3 dB above
    it (nothing) to 21 dB (full), so an empty room reads zero everywhere.
-4. **Presence gates the rest.** `volume` and the waveform come from raw
-   samples, so they're scaled by `presence` (else the waveform's own AGC
-   would draw hiss full height), and onset strengths are multiplied by
-   `smoothstep(0.3, 0.7, presence)`, since what's left of the noise after
-   subtraction still flickers and log flux turns flicker into beats.
+4. **Presence gates the rest.** `volume` comes from raw samples, so it's
+   scaled by `presence`. The waveform (whose own AGC would draw hiss full
+   height) and onset strengths are multiplied by `smoothstep(0.3, 0.7,
+   presence)`, since what's left of the noise after subtraction still
+   flickers and log flux turns flicker into beats.
 
-The trade-off is that a pad or bassline that never dips is slowly taken
-for the room (20 dB above it in ~100 s), and a fan switching on is learned
-at the same pace. A music-or-not signal (planned for the Seoul Frame's
-frame mode) could tell those apart.
+The trade-off: a drone with no onsets at all is taken for the room within
+about 20 s. A test plays three minutes of record through the room and
+checks the third minute reads like the first (an earlier version, with a
+single faster creep rate and frame-level presence, lost most of the
+record's volume and its onset gate within a minute).
 
 `RoomSim` (`audio/synth.rs`, `--room-sim`) is the test bench: the synth
 track 30 dB down, two 150 Hz high-passes, four early reflections, rumble
 and hiss at about 20 dB SNR, all scaled by a mic gain. The tests run it at
 −20, 0 and +20 dB and check that the untuned failure is real, that tuned
 it locks 124 BPM with moving bands, that an empty room stays dark with no
-beats at every gain, and that quiet and hot mics hear the same record.
+beats at every gain, that quiet and hot mics hear the same record, and
+that a long record doesn't fade into the room.
 `room_report` (ignored; `cargo test --release room_report -- --ignored
 --nocapture`) prints the numbers behind them. The HUD's stats panel shows
 the gain and floor, "learning the room…", or "no signal — is the mic
