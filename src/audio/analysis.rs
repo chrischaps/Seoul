@@ -109,6 +109,11 @@ const ROOM_LEVEL_FALL: f32 = 20.0;
 /// Gain eases toward its target over seconds, faster when it must come down.
 const ROOM_GAIN_RISE: f32 = 3.0;
 const ROOM_GAIN_FALL: f32 = 0.5;
+/// In a room the spectrum maps each bin's height above the room's floor:
+/// from just audible over it (the floor estimate sits ~1.5 dB under the
+/// noise's mean) to full.
+const ROOM_SPEC_BOTTOM_DB: f32 = 3.0;
+const ROOM_SPEC_SPAN_DB: f32 = 18.0;
 
 // Waveform.
 const WAVE_SEARCH: usize = 512;
@@ -519,6 +524,22 @@ impl Analyzer {
     }
 
     fn update_spectrum(&mut self, dt: f32) {
+        // In a room, each bin shows how far it stands above the room: its
+        // smoothed power over the learned floor. The direct feed's absolute
+        // scale doesn't carry over — a room's music sits 30–40 dB lower per
+        // bin than in its bands (which sum many bins), and its noise piles
+        // up at one end of the spectrum.
+        if let Some(r) = &self.room {
+            for (out, &(lo, hi)) in self.features.spectrum.iter_mut().zip(&self.spectrum_map) {
+                let power: f32 = r.power[lo..hi].iter().sum();
+                let noise: f32 = r.noise[lo..hi].iter().sum();
+                let snr_db = 10.0 * ((power + 1e-20) / (noise + 1e-20)).log10();
+                let target = ((snr_db - ROOM_SPEC_BOTTOM_DB) / ROOM_SPEC_SPAN_DB).clamp(0.0, 1.0);
+                *out = follow(*out, target, dt, SPEC_RISE, SPEC_FALL);
+            }
+            return;
+        }
+
         let mut frame_max_db = f32::NEG_INFINITY;
         let mut dbs = [0.0f32; SPECTRUM_BINS];
         for (i, &(lo, hi)) in self.spectrum_map.iter().enumerate() {
@@ -1285,7 +1306,7 @@ mod tests {
         let h = hear(20.0, 8.0, true, room_track(mic));
         assert!((h.bpm - 124.0).abs() < 2.0 && h.conf > 0.5, "{h:?}");
         assert!(h.p95[0] > 0.5 && h.p95[1] > 0.4 && h.p95[2] > 0.4, "bands barely move: {h:?}");
-        assert!(h.wave_peak > 0.2, "{h:?}");
+        assert!(h.wave_peak > 0.2 && h.spectrum_mean > 0.08, "{h:?}");
         let (gain_db, _) = h.room.unwrap();
         assert!(gain_db > 10.0, "gain {gain_db}");
     }

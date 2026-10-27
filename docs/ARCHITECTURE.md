@@ -139,7 +139,13 @@ everything that reads it:
    analysis floor, and cut when a hot mic needs it (−40…+36 dB, easing
    over ~3 s up and 0.5 s down). Every absolute threshold downstream then
    means "above the room", whatever the mic's gain.
-3. **Presence gates the rest.** `volume` and the waveform come from raw
+3. **The spectrum is measured against the room.** The direct feed's
+   absolute scale (a −35 dB reference floor) doesn't carry over: a room's
+   music sits 30–40 dB lower per bin than in its bands, which sum many
+   bins, and its noise piles up at one end. Each of the 64 bins instead
+   shows its smoothed power over its learned floor, mapped from 3 dB above
+   it (nothing) to 21 dB (full), so an empty room reads zero everywhere.
+4. **Presence gates the rest.** `volume` and the waveform come from raw
    samples, so they're scaled by `presence` (else the waveform's own AGC
    would draw hiss full height), and onset strengths are multiplied by
    `smoothstep(0.3, 0.7, presence)`, since what's left of the noise after
