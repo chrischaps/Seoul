@@ -33,7 +33,14 @@ keeps its presets, settings and screenshots in
 | F11 · Esc | fullscreen · quit |
 
 `seoul.exe --synth` plays a built-in 124 BPM test track. Use it when nothing
-else is playing. `--help` lists all the options. Settings live in
+else is playing.
+
+`seoul.exe --mic` listens to the room instead: a record, a guitar, people
+talking. It learns the room's background noise, subtracts it, and lifts
+what's left, so a record across the room moves the picture and an empty
+room stays still. `--input <NAME>` picks a microphone or line-in by name
+(`--list-inputs` shows them), and `[audio]` in `seoul.toml` makes it stick.
+Sound is analysed and dropped; nothing is recorded. `--help` lists all the options. Settings live in
 `seoul.toml` and apply while Seoul is running.
 
 ## Building from source
@@ -46,7 +53,8 @@ cargo test
 ```
 
 System audio comes in through cpal's loopback capture. That's WASAPI on
-Windows and a CoreAudio process tap on macOS 14.6+. The HUD uses fonts the OS
+Windows and a CoreAudio process tap on macOS 14.6+. Microphones and line
+inputs use the same cpal host. The HUD uses fonts the OS
 already ships. Every push to `main` builds and tests both platforms in GitHub
 Actions, and pushing a `v*` tag drafts a release with both zips.
 

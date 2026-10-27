@@ -15,6 +15,10 @@ OPTIONS:
     --input <NAME>          Listen to the first input device whose name contains NAME
                             (a microphone or line-in)
     --list-inputs           Print the input device names, then exit
+    --room-sim              Play the test track as a microphone across the room
+                            hears it: quiet, thin and noisy (implies --synth;
+                            room tuning on)
+    --no-room               Turn room tuning off for an input or --room-sim
     --preset <NAME>         Start on this preset
     --auto <SECS>           Auto-advance every SECS seconds (on a beat when possible)
     --transition <STYLE>    crossfade | dissolve | radial | clock | zoom | random,
@@ -47,6 +51,8 @@ pub struct Args {
     pub mic: bool,
     pub input: Option<String>,
     pub list_inputs: bool,
+    pub room_sim: bool,
+    pub no_room: bool,
     pub preset: Option<String>,
     pub auto: Option<f32>,
     pub transition: Option<String>,
@@ -81,6 +87,11 @@ impl Args {
                 "--mic" => args.mic = true,
                 "--input" => args.input = Some(value("--input")?),
                 "--list-inputs" => args.list_inputs = true,
+                "--room-sim" => {
+                    args.room_sim = true;
+                    args.synth = true;
+                }
+                "--no-room" => args.no_room = true,
                 "--record-hud" => args.record_hud = true,
                 "--fullscreen" => args.fullscreen = true,
                 "--no-link" => args.no_link = true,
@@ -153,6 +164,8 @@ mod tests {
         let m = parse("--mic --input USB --list-inputs").unwrap().unwrap();
         assert!(m.mic && m.list_inputs);
         assert_eq!(m.input.as_deref(), Some("USB"));
+        let r = parse("--room-sim --no-room").unwrap().unwrap();
+        assert!(r.room_sim && r.synth && r.no_room);
     }
 
     #[test]

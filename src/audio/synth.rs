@@ -20,19 +20,21 @@ const BPM: f32 = 124.0;
 /// Stay this far ahead of real time so the analysis thread never starves.
 const LEAD_SAMPLES: usize = 2048;
 
-pub fn spawn_synth(sink: Sender<AudioSource>) {
+/// Play the test track in real time. `room_sim` plays it as a microphone
+/// across the room hears it; `room` asks the analyzer for room tuning.
+pub fn spawn_synth(sink: Sender<AudioSource>, room_sim: bool, room: bool) {
     let (mut producer, consumer) = HeapRb::<f32>::new(RING_CAPACITY).split();
     let _ = sink.send(AudioSource {
         consumer,
         sample_rate: SAMPLE_RATE,
-        room: false,
+        room,
     });
-    info!(bpm = BPM, "synth test signal running");
+    info!(bpm = BPM, room_sim, room, "synth test signal running");
 
     thread::Builder::new()
         .name("seoul-synth".into())
         .spawn(move || {
-            let mut synth = Synth::default();
+            let mut synth = TestTrack::new(room_sim);
             let start = Instant::now();
             let mut produced = 0usize;
             loop {
@@ -61,6 +63,130 @@ pub fn spawn_fake_link(port: u16) {
             }
         })
         .expect("spawn fake link thread");
+}
+
+/// The test track as Seoul hears it: straight from the generator, or
+/// through [`RoomSim`]'s microphone across the room.
+pub struct TestTrack {
+    synth: Synth,
+    room: Option<RoomSim>,
+}
+
+impl TestTrack {
+    pub fn new(room_sim: bool) -> Self {
+        Self {
+            synth: Synth::default(),
+            room: room_sim.then(RoomSim::default),
+        }
+    }
+
+    pub fn next_sample(&mut self) -> f32 {
+        let s = self.synth.next_sample();
+        match &mut self.room {
+            Some(room) => room.hear(s),
+            None => s,
+        }
+    }
+}
+
+/// Room level: a record across the room reaches the mic about 30 dB down.
+const ROOM_LEVEL: f32 = 0.032;
+/// Small speakers and a thin mic: two first-order high-passes (12 dB/oct).
+const ROOM_HIGHPASS_HZ: f32 = 150.0;
+/// Early reflections off nearby walls: (delay s, gain).
+const ROOM_REFLECTIONS: [(f32, f32); 4] = [(0.011, 0.5), (0.023, 0.35), (0.041, 0.25), (0.067, 0.15)];
+/// Steady noise in RMS: fan and traffic rumble below ~400 Hz, plus preamp hiss.
+const ROOM_RUMBLE_DB: f32 = -64.0;
+const ROOM_HISS_DB: f32 = -72.0;
+const ROOM_RUMBLE_HZ: f32 = 400.0;
+
+/// The default room's mic gain: a laptop or webcam mic, music at living-room
+/// volume, which lands the record below the analysis floor if untuned.
+pub const ROOM_SIM_MIC_DB: f32 = -20.0;
+
+/// What a microphone across a living room hears of a signal: about 30 dB
+/// quieter, almost no bass, a few early reflections and a steady bed of
+/// rumble and hiss — a broadband signal-to-noise ratio of roughly 20 dB.
+/// The mic's gain scales all of it: low, and the music sinks under the
+/// analysis floor; high, and the room's noise rises above it.
+/// Deterministic, like the track, so tests and recordings repeat.
+pub struct RoomSim {
+    mic: f32,
+    hp_x: [f32; 2],
+    hp_y: [f32; 2],
+    hp_a: f32,
+    echo: Vec<f32>,
+    pos: usize,
+    taps: [(usize, f32); 4],
+    noise: u32,
+    rumble: f32,
+    rumble_k: f32,
+    rumble_gain: f32,
+    hiss_gain: f32,
+}
+
+impl Default for RoomSim {
+    fn default() -> Self {
+        Self::new(ROOM_SIM_MIC_DB)
+    }
+}
+
+impl RoomSim {
+    pub fn new(mic_db: f32) -> Self {
+        let sr = SAMPLE_RATE as f32;
+        let rc = 1.0 / (TAU * ROOM_HIGHPASS_HZ);
+        let rumble_k = 1.0 - (-TAU * ROOM_RUMBLE_HZ / sr).exp();
+        // Uniform white noise in -1..1 has RMS 1/√3; a one-pole low-pass
+        // with coefficient k keeps √(k / (2 − k)) of it.
+        let white_rms = 1.0 / 3f32.sqrt();
+        let rumble_rms = white_rms * (rumble_k / (2.0 - rumble_k)).sqrt();
+        let db = |d: f32| 10f32.powf(d / 20.0);
+        Self {
+            mic: db(mic_db),
+            hp_x: [0.0; 2],
+            hp_y: [0.0; 2],
+            hp_a: rc / (rc + 1.0 / sr),
+            echo: vec![0.0; 4096],
+            pos: 0,
+            taps: ROOM_REFLECTIONS.map(|(d, g)| ((d * sr) as usize, g)),
+            noise: 0x9e37_79b9,
+            rumble: 0.0,
+            rumble_k,
+            rumble_gain: db(ROOM_RUMBLE_DB) / rumble_rms,
+            hiss_gain: db(ROOM_HISS_DB) / white_rms,
+        }
+    }
+
+    fn white(&mut self) -> f32 {
+        let mut x = self.noise;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.noise = x;
+        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+
+    pub fn hear(&mut self, s: f32) -> f32 {
+        let mut x = s;
+        for i in 0..2 {
+            let y = self.hp_a * (self.hp_y[i] + x - self.hp_x[i]);
+            self.hp_x[i] = x;
+            self.hp_y[i] = y;
+            x = y;
+        }
+        let len = self.echo.len();
+        self.echo[self.pos] = x;
+        let mut wet = x;
+        for &(d, g) in &self.taps {
+            wet += g * self.echo[(self.pos + len - d) % len];
+        }
+        self.pos = (self.pos + 1) % len;
+
+        let w = self.white();
+        self.rumble += (w - self.rumble) * self.rumble_k;
+        let hiss = self.white();
+        self.mic * (ROOM_LEVEL * wet + self.rumble_gain * self.rumble + self.hiss_gain * hiss)
+    }
 }
 
 /// The test track's generator. Public so `--record` can step it in lockstep

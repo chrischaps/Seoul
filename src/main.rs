@@ -19,6 +19,7 @@ mod preset;
 mod render;
 
 use crate::audio::AudioFeatures;
+use crate::audio::analysis::RoomStatus;
 use crate::audio::capture::{Capture, Source};
 use crate::audio::link::{Link, LinkSettings, LinkState};
 use crate::cli::Args;
@@ -75,8 +76,14 @@ fn capture_source(cfg: &Config, args: &Args) -> (Source, bool) {
             }
         }
     };
-    let room = source != Source::Loopback && cfg.audio.room;
+    let room = source != Source::Loopback && cfg.audio.room && !args.no_room;
     (source, room)
+}
+
+/// Whether the test track gets room tuning: only when it's heard through
+/// the simulated room.
+fn synth_room(args: &Args) -> bool {
+    args.room_sim && !args.no_room
 }
 
 /// `--record`: renders offline at a fixed timestep. The synth track is
@@ -84,7 +91,7 @@ fn capture_source(cfg: &Config, args: &Args) -> (Source, bool) {
 /// rendered frame — so the footage is smooth and beat-locked no matter how
 /// long a frame takes to save.
 struct Recorder {
-    synth: audio::synth::Synth,
+    synth: audio::synth::TestTrack,
     analyzer: audio::analysis::Analyzer,
     dir: PathBuf,
     fps: f32,
@@ -97,10 +104,12 @@ struct Recorder {
 }
 
 impl Recorder {
-    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool) -> Self {
+    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool, room_sim: bool, room: bool) -> Self {
+        let mut analyzer = audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE);
+        analyzer.set_room(room);
         Self {
-            synth: audio::synth::Synth::default(),
-            analyzer: audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE),
+            synth: audio::synth::TestTrack::new(room_sim),
+            analyzer,
             dir,
             fps,
             frame: 0,
@@ -192,6 +201,7 @@ struct App {
     ctx: Option<RenderContext>,
     renderer: Option<Renderer>,
     features: Output<AudioFeatures>,
+    room_meter: Arc<audio::analysis::RoomMeter>,
     audio: AudioInput,
     link: Link,
     fullscreen: bool,
@@ -236,13 +246,27 @@ impl App {
             _ => (*self.features.read(), self.link.now()),
         };
         self.link.apply(&mut features, link_now);
-        let status = match &self.audio {
+        let mut status = match &self.audio {
+            AudioInput::Synth | AudioInput::Offline(_) if self.args.room_sim => "synth, across a room".to_owned(),
             AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
             AudioInput::Live(c) => match (c.device_name(), c.source()) {
                 (None, _) => "no audio — retrying".to_owned(),
                 (Some(name), Source::Loopback) => name.to_owned(),
                 (Some(name), Source::Input(_)) => format!("in · {name}"),
             },
+        };
+        let room = match &self.audio {
+            AudioInput::Offline(rec) => rec.analyzer.room_status(),
+            _ => self.room_meter.get(),
+        };
+        status += &match room {
+            None => String::new(),
+            Some(RoomStatus::Learning) => "\nroom   learning the room…".to_owned(),
+            Some(RoomStatus::NoSignal) => "\nroom   no signal — is the mic muted?".to_owned(),
+            // Whole dB, so the HUD only re-lays-out when something moves.
+            Some(RoomStatus::Tuned { gain_db, noise_db }) => {
+                format!("\nroom   {gain_db:+.0} dB gain · floor {noise_db:.0} dB")
+            }
         };
         renderer.hud_mut().set_audio_status(&status);
         renderer.hud_mut().set_link_status(&self.link.status_line(&features));
@@ -679,7 +703,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let (features, source_tx) = audio::analysis::spawn_analysis();
+    let (features, source_tx, room_meter) = audio::analysis::spawn_analysis();
     let audio = if let Some(dir) = &args.record {
         let dir = PathBuf::from(dir);
         std::fs::create_dir_all(&dir)?;
@@ -689,9 +713,11 @@ fn main() -> Result<()> {
             args.record_seconds.unwrap_or(10.0),
             fps,
             !args.no_link,
+            args.room_sim,
+            synth_room(&args),
         )))
     } else if args.synth {
-        audio::synth::spawn_synth(source_tx);
+        audio::synth::spawn_synth(source_tx, args.room_sim, synth_room(&args));
         AudioInput::Synth
     } else {
         let (source, room) = capture_source(&config, &args);
@@ -722,6 +748,7 @@ fn main() -> Result<()> {
         ctx: None,
         renderer: None,
         features,
+        room_meter,
         audio,
         link,
         fullscreen: false,

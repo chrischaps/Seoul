@@ -10,6 +10,7 @@ invariants that keep it all consistent. For writing presets, see
 - [Thread topology](#thread-topology)
 - [Audio capture](#audio-capture)
 - [Feature extraction](#feature-extraction)
+- [Room tuning](#room-tuning)
 - [`AudioFeatures`: CPU snapshot and GPU layout](#audiofeatures-cpu-snapshot-and-gpu-layout)
 - [Timing model](#timing-model)
 - [Render pass graph](#render-pass-graph)
@@ -29,7 +30,7 @@ invariants that keep it all consistent. For writing presets, see
  WASAPI callback ──ring (f32 mono)──▶ analysis thread ──triple buffer──▶ render thread
  (cpal, realtime)                     (Analyzer, ~5.8 ms hop)            (winit loop, wgpu)
         ▲                                     ▲
-        └──── LoopbackCapture (main thread) ──┘  sends a new ring on (re)connect
+        └─────── Capture (main thread) ───────┘  sends a new ring on (re)connect
 
  Soba (OSC/UDP 127.0.0.1:9137) ──▶ link thread ──snapshots (mpsc)──▶ render thread
                                    (LinkState, gate edges)         (merged after `delay_ms`)
@@ -43,7 +44,7 @@ invariants that keep it all consistent. For writing presets, see
   new `AudioSource`s (ring + sample rate) over an mpsc channel whenever
   capture reconnects, rebuilding the analyzer if the rate changes.
 - **Render thread** (`main.rs`, `render/`): owns the window, polls capture,
-  reads the latest features, renders. `--synth` replaces loopback with a
+  reads the latest features, renders. `--synth` replaces capture with a
   generator thread (`audio/synth.rs`) feeding the same channel.
 - **Link thread** (`audio/link.rs`): receives the Soba link's OSC on
   `127.0.0.1`, folds messages into a `LinkState` (counting gate rising
@@ -62,15 +63,24 @@ cpal implements WASAPI loopback implicitly: `build_input_stream` on a
 *render* device, with the config from `default_output_config()`, makes cpal
 set `AUDCLNT_STREAMFLAGS_LOOPBACK`. This is still true in cpal 0.18.
 
-`LoopbackCapture` lives on the main thread (cpal streams are `!Send`) and
-is polled every frame:
+`Capture` opens a `Source`: `Loopback` (the default output, as above) or
+`Input` — the default input device, or the first whose name contains some
+text (`--mic`, `--input <NAME>`, `[audio]` in `seoul.toml`; `--list-inputs`
+prints the names). An input uses `default_input_config()` and goes through
+the same downmix. Inputs are flagged for [room tuning](#room-tuning) unless
+`[audio] room = false` or `--no-room`.
+
+`Capture` lives on the main thread (cpal streams are `!Send`) and is polled
+every frame:
 
 - The stream's error callback sets an atomic flag for anything but `Xrun`.
   cpal 0.18 reports `StreamInvalidated` / `DeviceNotAvailable` when the
-  default output device changes; the flag triggers a reconnect after 250 ms.
+  default device changes; the flag triggers a reconnect after 250 ms.
 - Every 2 s it also compares the default device's id with the active one
-  (belt and braces).
+  (belt and braces). A device picked by name isn't followed; if it goes
+  missing, the retry below finds it when it's plugged back in.
 - With no device, the app runs on silence and retries every 2 s.
+- A config reload that changes `[audio]` reopens capture (`set_source`).
 
 ## Feature extraction
 
@@ -100,6 +110,56 @@ envelope decays exactly as it would on digital silence; nothing latches.
 Tests (`audio::analysis::tests`) cover silence, sub-floor noise, kick
 detection at 100/120/140 BPM, envelope decay, waveform stability, taper,
 and per-band balance.
+
+## Room tuning
+
+A microphone across the room hears the music 30 dB or more down, with
+little bass, over a steady bed of noise (fans, traffic, its own hiss).
+Untuned, that fails one of two ways depending on the mic's gain: a quiet
+mic puts the music under the −50 dBFS floor and every band reads zero (the
+picture sits dark, though tempo still locks — log flux is level-blind); a
+hot mic puts the room's noise above the floor, and the AGC stretches it
+into a picture that twitches in an empty room.
+
+`Analyzer::set_room(true)` adds a `Room` stage between the FFT and
+everything that reads it:
+
+1. **Noise floor per bin.** Each bin's power is smoothed (τ 100 ms) and a
+   floor is tracked beneath it: it falls toward quieter moments (τ 0.5 s)
+   and creeps up under steady sound at 0.2 dB/s. The first 0.5 s primes it
+   (the window has only just filled), and digital silence — a muted mic —
+   holds it rather than teaching it zero. 1.5× the floor is subtracted from
+   every bin's power before bands, spectrum and onsets see it. The same
+   tracker on the frame's mean square gives `presence`, the fraction of the
+   frame that is signal (0..1).
+2. **Gain, lifted or cut.** A level follower on the cleaned signal's loud
+   parts (rise 1 s, fall 20 s, updated only while `presence` > 0.5) sets a
+   target that would lift them to −12 dBFS; the gain is that target capped
+   so the room's noise floor (its loudest band) sits 3 dB *under* the
+   analysis floor, and cut when a hot mic needs it (−40…+36 dB, easing
+   over ~3 s up and 0.5 s down). Every absolute threshold downstream then
+   means "above the room", whatever the mic's gain.
+3. **Presence gates the rest.** `volume` and the waveform come from raw
+   samples, so they're scaled by `presence` (else the waveform's own AGC
+   would draw hiss full height), and onset strengths are multiplied by
+   `smoothstep(0.3, 0.7, presence)`, since what's left of the noise after
+   subtraction still flickers and log flux turns flicker into beats.
+
+The trade-off is that a pad or bassline that never dips is slowly taken
+for the room (20 dB above it in ~100 s), and a fan switching on is learned
+at the same pace. A music-or-not signal (planned for the Seoul Frame's
+frame mode) could tell those apart.
+
+`RoomSim` (`audio/synth.rs`, `--room-sim`) is the test bench: the synth
+track 30 dB down, two 150 Hz high-passes, four early reflections, rumble
+and hiss at about 20 dB SNR, all scaled by a mic gain. The tests run it at
+−20, 0 and +20 dB and check that the untuned failure is real, that tuned
+it locks 124 BPM with moving bands, that an empty room stays dark with no
+beats at every gain, and that quiet and hot mics hear the same record.
+`room_report` (ignored; `cargo test --release room_report -- --ignored
+--nocapture`) prints the numbers behind them. The HUD's stats panel shows
+the gain and floor, "learning the room…", or "no signal — is the mic
+muted?" after 1 s of digital zeros.
 
 ## `AudioFeatures`: CPU snapshot and GPU layout
 
