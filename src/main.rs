@@ -19,7 +19,7 @@ mod preset;
 mod render;
 
 use crate::audio::AudioFeatures;
-use crate::audio::capture::LoopbackCapture;
+use crate::audio::capture::{Capture, Source};
 use crate::audio::link::{Link, LinkSettings, LinkState};
 use crate::cli::Args;
 use crate::config::{Config, ConfigWatch};
@@ -58,6 +58,25 @@ fn link_settings(cfg: &Config, args: &Args) -> LinkSettings {
         port: args.link_port.unwrap_or(cfg.link.port),
         delay_ms: cfg.link.delay_ms,
     }
+}
+
+/// Merge config with command-line overrides into the live audio source and
+/// whether it gets room tuning. Loopback is a direct feed, never tuned.
+fn capture_source(cfg: &Config, args: &Args) -> (Source, bool) {
+    let source = if let Some(name) = &args.input {
+        Source::Input(Some(name.clone()))
+    } else if args.mic {
+        Source::Input(None)
+    } else {
+        match cfg.audio.source {
+            config::AudioSourceKind::Loopback => Source::Loopback,
+            config::AudioSourceKind::Input => {
+                Source::Input(cfg.audio.device.clone().filter(|d| !d.trim().is_empty()))
+            }
+        }
+    };
+    let room = source != Source::Loopback && cfg.audio.room;
+    (source, room)
 }
 
 /// `--record`: renders offline at a fixed timestep. The synth track is
@@ -125,17 +144,18 @@ impl Recorder {
     }
 }
 
-/// Where audio comes from. Loopback must be polled on this thread because
-/// cpal streams are `!Send`; the synth runs entirely on its own thread.
+/// Where audio comes from. Live capture must be polled on this thread
+/// because cpal streams are `!Send`; the synth runs entirely on its own
+/// thread.
 enum AudioInput {
-    Loopback(Box<LoopbackCapture>),
+    Live(Box<Capture>),
     Synth,
     Offline(Box<Recorder>),
 }
 
 impl AudioInput {
     fn poll(&mut self) {
-        if let AudioInput::Loopback(c) = self {
+        if let AudioInput::Live(c) = self {
             c.poll();
         }
     }
@@ -198,6 +218,10 @@ impl App {
                 r.library_mut().set_settings(settings);
             }
             self.link.configure(link_settings(&cfg, &self.args));
+            if let AudioInput::Live(c) = &mut self.audio {
+                let (source, room) = capture_source(&cfg, &self.args);
+                c.set_source(source, room);
+            }
             self.config = cfg;
         }
 
@@ -214,7 +238,11 @@ impl App {
         self.link.apply(&mut features, link_now);
         let status = match &self.audio {
             AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
-            AudioInput::Loopback(c) => c.device_name().map_or_else(|| "no audio — retrying".to_owned(), str::to_owned),
+            AudioInput::Live(c) => match (c.device_name(), c.source()) {
+                (None, _) => "no audio — retrying".to_owned(),
+                (Some(name), Source::Loopback) => name.to_owned(),
+                (Some(name), Source::Input(_)) => format!("in · {name}"),
+            },
         };
         renderer.hud_mut().set_audio_status(&status);
         renderer.hud_mut().set_link_status(&self.link.status_line(&features));
@@ -617,6 +645,16 @@ fn main() -> Result<()> {
     let Some(args) = Args::parse()? else {
         return Ok(());
     };
+    if args.list_inputs {
+        let names = audio::capture::input_device_names()?;
+        if names.is_empty() {
+            println!("no input devices");
+        }
+        for (name, is_default) in names {
+            println!("{name}{}", if is_default { "  (default)" } else { "" });
+        }
+        return Ok(());
+    }
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "seoul=info,wgpu_core=warn,wgpu_hal=warn".into());
@@ -656,7 +694,8 @@ fn main() -> Result<()> {
         audio::synth::spawn_synth(source_tx);
         AudioInput::Synth
     } else {
-        AudioInput::Loopback(Box::new(LoopbackCapture::new(source_tx)))
+        let (source, room) = capture_source(&config, &args);
+        AudioInput::Live(Box::new(Capture::new(source_tx, source, room)))
     };
 
     let link = if args.record.is_some() {

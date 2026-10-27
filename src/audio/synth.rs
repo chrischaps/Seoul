@@ -25,6 +25,7 @@ pub fn spawn_synth(sink: Sender<AudioSource>) {
     let _ = sink.send(AudioSource {
         consumer,
         sample_rate: SAMPLE_RATE,
+        room: false,
     });
     info!(bpm = BPM, "synth test signal running");
 

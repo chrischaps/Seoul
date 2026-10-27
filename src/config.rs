@@ -33,6 +33,7 @@ pub struct Config {
     pub post: PostDefaults,
     pub hud: HudConfig,
     pub link: LinkConfig,
+    pub audio: AudioConfig,
 }
 
 impl Default for Config {
@@ -47,8 +48,41 @@ impl Default for Config {
             post: PostDefaults::default(),
             hud: HudConfig::default(),
             link: LinkConfig::default(),
+            audio: AudioConfig::default(),
         }
     }
+}
+
+/// Where live audio comes from.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AudioConfig {
+    pub source: AudioSourceKind,
+    /// For `source = "input"`: the first device whose name contains this
+    /// text. Unset means the system's default input.
+    pub device: Option<String>,
+    /// Room tuning for inputs: a learned noise floor and a slow gain, for a
+    /// microphone across the room. Turn off for a clean line-in feed.
+    pub room: bool,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            source: AudioSourceKind::Loopback,
+            device: None,
+            room: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioSourceKind {
+    /// What the computer is playing.
+    Loopback,
+    /// A microphone or line-in.
+    Input,
 }
 
 /// The Soba link (`docs/LINK.md`).
@@ -301,6 +335,18 @@ mod tests {
         assert_eq!(c.link.port, 9137);
         let c = Config::parse("[link]\nport = 9200\ndelay_ms = 45\n").unwrap();
         assert_eq!((c.link.port, c.link.delay_ms), (9200, 45.0));
+    }
+
+    #[test]
+    fn audio_section() {
+        let c = Config::parse("").unwrap();
+        assert_eq!(c.audio.source, AudioSourceKind::Loopback);
+        assert!(c.audio.room && c.audio.device.is_none());
+        let c = Config::parse("[audio]\nsource = \"input\"\ndevice = \"USB\"\nroom = false\n").unwrap();
+        assert_eq!(c.audio.source, AudioSourceKind::Input);
+        assert_eq!(c.audio.device.as_deref(), Some("USB"));
+        assert!(!c.audio.room);
+        assert!(Config::parse("[audio]\nsource = \"mic\"\n").is_err());
     }
 
     #[test]

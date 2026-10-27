@@ -81,6 +81,8 @@ const WAVE_REF_RELEASE: f32 = 2.0;
 pub struct AudioSource {
     pub consumer: ringbuf::HeapCons<f32>,
     pub sample_rate: u32,
+    /// Room tuning for a microphone across the room ([`Analyzer::set_room`]).
+    pub room: bool,
 }
 
 /// Spawn the analysis thread. Returns the features reader for the render
@@ -113,8 +115,9 @@ fn analysis_loop(sources: Receiver<AudioSource>, mut out: Input<AudioFeatures>) 
             if src.sample_rate as f32 != analyzer.sample_rate {
                 analyzer = Analyzer::new(src.sample_rate);
             }
+            analyzer.set_room(src.room);
             source = Some(src.consumer);
-            info!(sample_rate = src.sample_rate, "analysis attached to audio source");
+            info!(sample_rate = src.sample_rate, room = src.room, "analysis attached to audio source");
         }
 
         buf.clear();
@@ -197,6 +200,8 @@ pub struct Analyzer {
     bpm: f32,
     bpm_confidence: f32,
     phase: f32,
+
+    room: bool,
 
     features: AudioFeatures,
 }
@@ -291,12 +296,18 @@ impl Analyzer {
             bpm: BPM_DEFAULT,
             bpm_confidence: 0.0,
             phase: 0.0,
+            room: false,
             features: AudioFeatures::default(),
         }
     }
 
     pub fn features(&self) -> &AudioFeatures {
         &self.features
+    }
+
+    /// Turn room tuning on or off. Off (loopback, the synth) is a direct feed.
+    pub fn set_room(&mut self, on: bool) {
+        self.room = on;
     }
 
     /// Feed mono samples. Returns true if at least one hop was analyzed

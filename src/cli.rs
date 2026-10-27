@@ -11,6 +11,10 @@ USAGE:
 OPTIONS:
     --config <PATH>         Settings file (default: seoul.toml)
     --synth                 Use the built-in test track instead of system audio
+    --mic                   Listen to the default microphone instead of system audio
+    --input <NAME>          Listen to the first input device whose name contains NAME
+                            (a microphone or line-in)
+    --list-inputs           Print the input device names, then exit
     --preset <NAME>         Start on this preset
     --auto <SECS>           Auto-advance every SECS seconds (on a beat when possible)
     --transition <STYLE>    crossfade | dissolve | radial | clock | zoom | random,
@@ -40,6 +44,9 @@ OPTIONS:
 pub struct Args {
     pub config: Option<String>,
     pub synth: bool,
+    pub mic: bool,
+    pub input: Option<String>,
+    pub list_inputs: bool,
     pub preset: Option<String>,
     pub auto: Option<f32>,
     pub transition: Option<String>,
@@ -71,6 +78,9 @@ impl Args {
             let mut value = |name: &str| it.next().ok_or_else(|| anyhow!("{name} needs a value"));
             match flag.as_str() {
                 "--synth" => args.synth = true,
+                "--mic" => args.mic = true,
+                "--input" => args.input = Some(value("--input")?),
+                "--list-inputs" => args.list_inputs = true,
                 "--record-hud" => args.record_hud = true,
                 "--fullscreen" => args.fullscreen = true,
                 "--no-link" => args.no_link = true,
@@ -140,6 +150,9 @@ mod tests {
         let l = parse("--no-link --link-port 9200").unwrap().unwrap();
         assert!(l.no_link);
         assert_eq!(l.link_port, Some(9200));
+        let m = parse("--mic --input USB --list-inputs").unwrap().unwrap();
+        assert!(m.mic && m.list_inputs);
+        assert_eq!(m.input.as_deref(), Some("USB"));
     }
 
     #[test]
