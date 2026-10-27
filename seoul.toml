@@ -47,6 +47,19 @@ source = "loopback"
 # quiet sound. Turn it off for a clean line-in feed.
 room = true
 
+[frame]
+# Seoul as a picture on the wall (or start with --frame): fullscreen, no
+# HUD or cursor, presets advance on their own. When the room is quiet the
+# picture rests, slow and dim; talk lifts it a little; music plays it fully.
+enabled = false
+# "favorites" plays only your favorites (F), once there are any; or "all".
+playlist = "favorites"
+# A warmer, dimmer grade from `night`; the screen sleeps from `sleep` until
+# `wake`. A record played in the sleep window still wakes it.
+night = "20:00"
+sleep = "23:00"
+wake = "07:00"
+
 [link]
 # Listen for a Soba patch (or any OSC sender) on 127.0.0.1. See docs/LINK.md.
 enabled = true

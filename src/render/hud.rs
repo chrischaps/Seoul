@@ -159,6 +159,9 @@ pub struct Hud {
     fps: f32,
 
     pub enabled: bool,
+    /// Frame mode: the startup wordmark, then nothing — no toasts,
+    /// notices or error panel on a picture on the wall.
+    pub wordmark_only: bool,
     pub show_help: bool,
     pub show_stats: bool,
     pub toast_seconds: f32,
@@ -269,6 +272,7 @@ impl Hud {
             clock: 0.0,
             fps: 60.0,
             enabled: true,
+            wordmark_only: false,
             show_help: false,
             show_stats: false,
             toast_seconds: 3.0,
@@ -330,10 +334,12 @@ impl Hud {
         let mut areas: Vec<(LabelId, f32, f32, f32)> = Vec::new();
         if self.enabled {
             self.layout_wordmark(&mut areas);
-            self.layout_toast(input, &mut areas);
-            self.layout_notice(&mut areas);
-            if let Some(err) = input.error {
-                self.layout_error(err, &mut areas);
+            if !self.wordmark_only {
+                self.layout_toast(input, &mut areas);
+                self.layout_notice(&mut areas);
+                if let Some(err) = input.error {
+                    self.layout_error(err, &mut areas);
+                }
             }
         }
         if self.show_stats {

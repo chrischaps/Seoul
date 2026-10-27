@@ -40,8 +40,17 @@ talking. It learns the room's background noise, subtracts it, and lifts
 what's left, so a record across the room moves the picture and an empty
 room stays still. `--input <NAME>` picks a microphone or line-in by name
 (`--list-inputs` shows them), and `[audio]` in `seoul.toml` makes it stick.
-Sound is analysed and dropped; nothing is recorded. `--help` lists all the options. Settings live in
-`seoul.toml` and apply while Seoul is running.
+Sound is analysed and dropped; nothing is recorded.
+
+`seoul.exe --frame --mic` makes Seoul a picture on the wall. It goes
+fullscreen with no on-screen text and changes presets by itself (your
+favorites, once you have some). When the room is quiet the picture rests:
+slow and dim, nearly still. Talk lifts it a little; music plays it fully.
+In the evening its light turns warm, and from 11 pm to 7 am it sleeps
+unless a record is playing. `[frame]` in `seoul.toml` sets the hours.
+
+`--help` lists all the options. Settings live in `seoul.toml` and apply
+while Seoul is running.
 
 ## Building from source
 

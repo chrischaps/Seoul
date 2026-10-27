@@ -15,6 +15,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 mod audio;
 mod cli;
 mod config;
+mod frame;
 mod preset;
 mod render;
 
@@ -24,6 +25,7 @@ use crate::audio::capture::{Capture, Source};
 use crate::audio::link::{Link, LinkSettings, LinkState};
 use crate::cli::Args;
 use crate::config::{Config, ConfigWatch};
+use crate::frame::{Clock, FrameMode};
 use crate::preset::curation::{Curation, STATE_PATH};
 use crate::preset::library::LibrarySettings;
 use crate::render::{RenderContext, Renderer, RendererOptions};
@@ -37,6 +39,7 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
         auto_max: cfg.auto.max_interval.max(cfg.auto.min_interval),
         transition_styles: cfg.transition.styles().unwrap_or_default(),
         transition_duration: cfg.transition.duration,
+        favorites_only: false,
     };
     if let Some(secs) = args.auto {
         s.auto_advance = true;
@@ -48,6 +51,11 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
             Ok(styles) => s.transition_styles = styles,
             Err(e) => warn!("--transition: {e}; using config"),
         }
+    }
+    // A frame on the wall changes pictures by itself.
+    if frame_on(cfg, args) {
+        s.auto_advance = true;
+        s.favorites_only = cfg.frame.playlist == config::Playlist::Favorites;
     }
     s
 }
@@ -86,6 +94,19 @@ fn synth_room(args: &Args) -> bool {
     args.room_sim && !args.no_room
 }
 
+/// The test track these flags ask for.
+fn test_track(args: &Args) -> audio::synth::TestTrack {
+    if args.evening {
+        audio::synth::TestTrack::evening()
+    } else {
+        audio::synth::TestTrack::new(args.room_sim)
+    }
+}
+
+fn frame_on(cfg: &Config, args: &Args) -> bool {
+    args.frame || cfg.frame.enabled
+}
+
 /// `--record`: renders offline at a fixed timestep. The synth track is
 /// generated and analyzed in lockstep — exactly one frame of audio per
 /// rendered frame — so the footage is smooth and beat-locked no matter how
@@ -104,11 +125,11 @@ struct Recorder {
 }
 
 impl Recorder {
-    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool, room_sim: bool, room: bool) -> Self {
+    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool, synth: audio::synth::TestTrack, room: bool) -> Self {
         let mut analyzer = audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE);
         analyzer.set_room(room);
         Self {
-            synth: audio::synth::TestTrack::new(room_sim),
+            synth,
             analyzer,
             dir,
             fps,
@@ -202,6 +223,9 @@ struct App {
     renderer: Option<Renderer>,
     features: Output<AudioFeatures>,
     room_meter: Arc<audio::analysis::RoomMeter>,
+    /// Frame mode (`--frame` or `[frame] enabled`).
+    frame: Option<FrameMode>,
+    last_frame: Option<Instant>,
     audio: AudioInput,
     link: Link,
     fullscreen: bool,
@@ -228,6 +252,11 @@ impl App {
                 r.library_mut().set_settings(settings);
             }
             self.link.configure(link_settings(&cfg, &self.args));
+            if let Some(fm) = self.frame.as_mut()
+                && let Ok(settings) = cfg.frame.settings()
+            {
+                fm.settings = settings;
+            }
             if let AudioInput::Live(c) = &mut self.audio {
                 let (source, room) = capture_source(&cfg, &self.args);
                 c.set_source(source, room);
@@ -246,6 +275,30 @@ impl App {
             _ => (*self.features.read(), self.link.now()),
         };
         self.link.apply(&mut features, link_now);
+
+        // Frame mode reads the room as analysed, then decides what presets
+        // hear and how the picture moves.
+        let now = Instant::now();
+        let real_dt = match &self.audio {
+            AudioInput::Offline(rec) => 1.0 / rec.fps,
+            _ => self.last_frame.map_or(1.0 / 60.0, |t| (now - t).as_secs_f32().min(0.1)),
+        };
+        self.last_frame = Some(now);
+        if let Some(fm) = self.frame.as_mut() {
+            let before = fm.mood();
+            let look = fm.update(&features, real_dt);
+            if fm.mood() != before {
+                // A recording's frame number places the change in the footage.
+                let frame = match &self.audio {
+                    AudioInput::Offline(rec) => Some(rec.frame),
+                    _ => None,
+                };
+                info!(mood = fm.mood().label(), ?frame, "frame mood");
+            }
+            frame::apply(&look, &mut features);
+            renderer.set_look(look.speed, look.exposure, look.warmth);
+        }
+
         let mut status = match &self.audio {
             AudioInput::Synth | AudioInput::Offline(_) if self.args.room_sim => "synth, across a room".to_owned(),
             AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
@@ -268,6 +321,10 @@ impl App {
                 format!("\nroom   {gain_db:+.0} dB gain · floor {noise_db:.0} dB")
             }
         };
+        if let Some(fm) = &self.frame {
+            status += &format!("
+frame  {}", fm.status());
+        }
         renderer.hud_mut().set_audio_status(&status);
         renderer.hud_mut().set_link_status(&self.link.status_line(&features));
 
@@ -369,6 +426,11 @@ impl App {
             self.title = title;
         }
 
+        // Asleep and faded out: a few frames a second keep listening for a
+        // record that would wake it, without running the GPU flat out.
+        if self.frame.as_ref().is_some_and(FrameMode::is_dark) && !matches!(self.audio, AudioInput::Offline(_)) {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
         window.request_redraw();
     }
 
@@ -503,6 +565,10 @@ impl ApplicationHandler for App {
             hud.enabled = self.config.hud.enabled;
             hud.show_stats = self.config.hud.stats;
             hud.toast_seconds = self.config.hud.toast_seconds;
+            if self.frame.is_some() {
+                hud.enabled = true;
+                hud.wordmark_only = true;
+            }
             if self.args.tour.is_some() {
                 // Clean frames for preset review.
                 hud.enabled = false;
@@ -560,7 +626,7 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.ctx = Some(ctx);
         self.renderer = Some(renderer);
-        if self.args.fullscreen || self.config.fullscreen {
+        if self.args.fullscreen || self.config.fullscreen || (self.frame.is_some() && !batch) {
             self.toggle_fullscreen_on(self.config.monitor, event_loop);
         }
     }
@@ -713,16 +779,31 @@ fn main() -> Result<()> {
             args.record_seconds.unwrap_or(10.0),
             fps,
             !args.no_link,
-            args.room_sim,
+            test_track(&args),
             synth_room(&args),
         )))
     } else if args.synth {
-        audio::synth::spawn_synth(source_tx, args.room_sim, synth_room(&args));
+        audio::synth::spawn_synth(source_tx, test_track(&args), synth_room(&args));
         AudioInput::Synth
     } else {
         let (source, room) = capture_source(&config, &args);
         AudioInput::Live(Box::new(Capture::new(source_tx, source, room)))
     };
+
+    let frame = frame_on(&config, &args).then(|| {
+        let settings = config.frame.settings().unwrap_or_else(|e| {
+            warn!("{e:#}; using the default times");
+            Default::default()
+        });
+        // Recordings are repeatable: without --clock they happen at noon.
+        let clock = match (args.clock, args.record.is_some()) {
+            (Some(m), _) => Clock::Fixed(m),
+            (None, true) => Clock::Fixed(12.0 * 60.0),
+            (None, false) => Clock::Local,
+        };
+        info!(?settings, ?clock, "frame mode");
+        FrameMode::new(settings, clock)
+    });
 
     let link = if args.record.is_some() {
         Link::offline()
@@ -749,6 +830,8 @@ fn main() -> Result<()> {
         renderer: None,
         features,
         room_meter,
+        frame,
+        last_frame: None,
         audio,
         link,
         fullscreen: false,

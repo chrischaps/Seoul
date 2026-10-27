@@ -99,6 +99,8 @@ pub struct LibrarySettings {
     /// Styles to cycle through; empty = random style per transition.
     pub transition_styles: Vec<TransitionStyle>,
     pub transition_duration: f32,
+    /// Advance only through favorites (when there are any).
+    pub favorites_only: bool,
 }
 
 impl Default for LibrarySettings {
@@ -110,6 +112,7 @@ impl Default for LibrarySettings {
             auto_max: 45.0,
             transition_styles: Vec::new(),
             transition_duration: 3.0,
+            favorites_only: false,
         }
     }
 }
@@ -411,7 +414,15 @@ impl PresetLibrary {
     }
 
     fn visible(&self, idx: usize) -> bool {
-        !self.curation.is_hidden(&self.presets[idx].spec.name)
+        let name = &self.presets[idx].spec.name;
+        if self.curation.is_hidden(name) {
+            return false;
+        }
+        // A favorites playlist (frame mode) plays only favorites — once
+        // there are any to play.
+        !self.settings.favorites_only
+            || self.curation.is_favorite(name)
+            || !self.presets.iter().any(|p| self.curation.is_favorite(&p.spec.name))
     }
 
     // ---- Navigation --------------------------------------------------------

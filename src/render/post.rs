@@ -167,7 +167,9 @@ struct PostUniforms {
     echo_orient: f32,
     mirror_mode: f32,
     mirror_n: f32,
-    _pad: [f32; 2],
+    /// Frame mode's night grade, 0..1.
+    warmth: f32,
+    _pad: f32,
 }
 
 const _: () = assert!(std::mem::size_of::<PostUniforms>() == 80);
@@ -305,6 +307,7 @@ impl PostPass {
         &self,
         queue: &wgpu::Queue,
         params: &PostParams,
+        warmth: f32,
         time: f32,
         beat: f32,
         output_size: (u32, u32),
@@ -341,7 +344,8 @@ impl PostPass {
             echo_orient: params.echo_orient as u8 as f32,
             mirror_mode,
             mirror_n,
-            _pad: [0.0; 2],
+            warmth: warmth.clamp(0.0, 1.0),
+            _pad: 0.0,
         };
         queue.write_buffer(&self.final_uniforms, 0, bytemuck::bytes_of(&u));
     }

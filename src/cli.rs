@@ -19,6 +19,13 @@ OPTIONS:
                             hears it: quiet, thin and noisy (implies --synth;
                             room tuning on)
     --no-room               Turn room tuning off for an input or --room-sim
+    --evening               Play a scripted evening through the simulated room —
+                            empty, then talk, then a record, then empty again
+                            (implies --room-sim)
+    --frame                 Frame mode: fullscreen, no HUD, presets advance on
+                            their own, and the picture rests when the room is quiet
+    --clock <HH:MM>         Pretend it's this time of day (frame mode's night and
+                            sleep); it runs on from there
     --preset <NAME>         Start on this preset
     --auto <SECS>           Auto-advance every SECS seconds (on a beat when possible)
     --transition <STYLE>    crossfade | dissolve | radial | clock | zoom | random,
@@ -53,6 +60,9 @@ pub struct Args {
     pub list_inputs: bool,
     pub room_sim: bool,
     pub no_room: bool,
+    pub evening: bool,
+    pub frame: bool,
+    pub clock: Option<f32>,
     pub preset: Option<String>,
     pub auto: Option<f32>,
     pub transition: Option<String>,
@@ -92,6 +102,17 @@ impl Args {
                     args.synth = true;
                 }
                 "--no-room" => args.no_room = true,
+                "--evening" => {
+                    args.evening = true;
+                    args.room_sim = true;
+                    args.synth = true;
+                }
+                "--frame" => args.frame = true,
+                "--clock" => {
+                    let v = value("--clock")?;
+                    args.clock =
+                        Some(crate::frame::parse_clock(&v).ok_or_else(|| anyhow!("--clock expects HH:MM, got '{v}'"))?);
+                }
                 "--record-hud" => args.record_hud = true,
                 "--fullscreen" => args.fullscreen = true,
                 "--no-link" => args.no_link = true,
@@ -166,6 +187,10 @@ mod tests {
         assert_eq!(m.input.as_deref(), Some("USB"));
         let r = parse("--room-sim --no-room").unwrap().unwrap();
         assert!(r.room_sim && r.synth && r.no_room);
+        let f = parse("--frame --evening --clock 22:45").unwrap().unwrap();
+        assert!(f.frame && f.evening && f.room_sim && f.synth);
+        assert_eq!(f.clock, Some(22.0 * 60.0 + 45.0));
+        assert!(parse("--clock 25:00").is_err());
     }
 
     #[test]

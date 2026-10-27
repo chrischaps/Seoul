@@ -32,7 +32,7 @@ struct PostUniforms {
 
     mirror_mode: f32,
     mirror_n: f32,
-    _pad0: f32,
+    warmth: f32,
     _pad1: f32,
 };
 @group(1) @binding(0) var<uniform> p: PostUniforms;
@@ -175,6 +175,9 @@ fn fs_post(in: Varying) -> @location(0) vec4<f32> {
     col = pow(col, vec3<f32>(p.contrast));
     let l = dot(col, LUMA);
     col = max(l + p.saturation * (col - l), vec3<f32>(0.0));
+    // Frame mode's night grade: lamplight, not a blue screen. Pull blue
+    // and some green out, keep luminance roughly where it was.
+    col = col * mix(vec3<f32>(1.0), vec3<f32>(1.12, 0.95, 0.70), p.warmth);
     var s = linear_to_srgb(tonemap(col));
 
     // Vignette in aspect-correct space.

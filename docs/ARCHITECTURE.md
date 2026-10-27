@@ -18,6 +18,7 @@ invariants that keep it all consistent. For writing presets, see
 - [Preset system](#preset-system)
 - [Hot reload](#hot-reload)
 - [Curation, auto-advance, config](#curation-auto-advance-config)
+- [Frame mode](#frame-mode)
 - [HUD](#hud)
 - [Verification tooling](#verification-tooling)
 - [Invariants checklist](#invariants-checklist)
@@ -207,6 +208,10 @@ aren't filterable without an optional feature.
   is per second. The composite mask carries `k` too, so per-frame additive
   energy scales with frame time. Result: the same trails and brightness at
   60 and 144 Hz (unit-tested).
+- Scene time runs at `speed` × real time (`Renderer::set_look`; 1 outside
+  frame mode). Because every motion, decay, particle step and transition
+  goes through `dt`, a slower `speed` is true slow motion with the same
+  equilibrium brightness. The HUD keeps real time.
 
 ## Render pass graph
 
@@ -345,8 +350,45 @@ for `.toml`/`.wgsl`. `PresetLibrary::poll_reloads` debounces per path
   beat, and only on a 4-beat boundary when tempo confidence ≥ 0.4; always
   change at `max_interval` (so silence still advances). Lock (L) pauses it.
 - `config.rs`: `seoul.toml` sections `[auto]`, `[transition]`, `[post]`
-  (global look defaults), `[hud]`, plus start preset, fullscreen/monitor,
-  render scale. CLI flags override.
+  (global look defaults), `[hud]`, `[audio]`, `[frame]`, `[link]`, plus
+  start preset, fullscreen/monitor, render scale. CLI flags override.
+- `LibrarySettings::favorites_only` (frame mode's default playlist) makes
+  `visible()` admit only favorites, once any exist, so Space, R and
+  auto-advance all keep to them.
+
+## Frame mode
+
+`--frame` or `[frame] enabled` turns Seoul into a picture on the wall:
+borderless fullscreen with no cursor, the 서울 wordmark at startup and
+then no HUD (`Hud::wordmark_only`; F1 still works), auto-advance forced
+on, favorites as the playlist. `frame.rs` holds the logic, pure and
+unit-tested:
+
+- **`MoodTracker`** reads the analysed features each frame. *Resting*:
+  nothing above `volume` 0.15 for 4 s. *Playing*: music for 2 s, where
+  music is any of: 4 s of unbroken sound (no gap of 0.15 s; talk breaks
+  between phrases every 1–3 s, a record doesn't), sound ~90% of the last
+  ~8 s, a confident tempo with recent beats, or a live, playing Soba link.
+  It stops 5 s after the evidence does. *Listening*: anything else.
+- **`FrameMode`** eases a `Look` toward each mood — resting: speed 0.25,
+  exposure 0.4, presets hear nothing; listening: 0.5, 0.65, they hear the
+  music at 35% and no beats (drum ages read 1000, so hit-triggered effects
+  stay still); playing: everything at 1 — waking over ~1.5 s and settling
+  over ~6 s. From `night` it adds a warm grade (`PostUniforms::warmth`,
+  over ~60 s) and ×0.75 exposure; from `sleep` to `wake` it fades to black
+  (τ 10 s) unless music is playing, and the render loop drops to a few
+  frames a second once dark. The first frame snaps to the hour, so a frame
+  switched on at 2 am starts dark.
+- The time of day is local (`chrono`), or `--clock HH:MM` from there on.
+  Recordings default to noon, so they repeat.
+
+`--evening` plays a scripted room for testing it (`TestTrack::evening`):
+empty, then 20 s of `Talk` (formant-filtered glottal pulses in phrases of
+4–11 syllables with pauses between, so it has speech's rhythm and gaps),
+then the record from its first bar, then empty. A test runs it through
+the room-tuned analyzer and asserts each stretch's mood; `mood_report`
+(ignored) prints the timeline and the longest unbroken run during talk
+(2.2 s against the 4 s threshold).
 
 ## HUD
 
@@ -371,6 +413,9 @@ the HUD (the post and HUD passes are re-run offscreen for the last frame).
   presets, screenshot each into `screenshots/tour/`, exit. The HUD is
   disabled for clean frames.
 - `--screenshot-at SECS`, `P`: PNG of the current frame.
+- `--room-sim`, `--evening`: the synth through a simulated room mic, or a
+  scripted evening of empty room, talk and a record; `--frame --clock
+  HH:MM` previews frame mode at any hour.
 
 ## Invariants checklist
 
