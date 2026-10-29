@@ -55,3 +55,23 @@ Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-st
 ## Audio capture gotcha (WASAPI loopback)
 
 cpal's WASAPI backend implements loopback via a specific pattern: call `build_input_stream` **on the default output device**, using the config returned by `default_output_config()` (not `default_input_config()`). The backend detects this combination and sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. If capture ever silently stops working, re-check `src/audio/capture.rs::open_loopback`; the device/config pairing is the load-bearing part. This is still true as of cpal 0.18, which also reports `StreamInvalidated`/`DeviceNotAvailable` on default-device changes; `LoopbackCapture` uses those to reconnect. Default configs may now be I32/F64/I24; the generic `push_mono` handles them all.
+
+<!-- claims:begin (from chrischaps/Dashboard skills/setup-claims; re-run its install.sh to update) -->
+## Claiming issues
+
+Agents on several machines work this repo, all as the same GitHub user, so an issue is claimed before anyone works on it. A claim is the branch `claim/issue-<n>` on origin, holding one empty commit that names the agent and host. Git accepts only the first push of a new branch, so exactly one claimant wins. `scripts/issue.sh` does the whole cycle (bash; on Windows it runs under Git Bash):
+
+```bash
+scripts/issue.sh list                  # who holds what, on every machine, and for how long
+scripts/issue.sh claim <n>             # claim and make the worktree ../Seoul-<n>; exit 2: taken, pick another
+scripts/issue.sh claim <n> --here      # claim for the worktree you're already in (a desktop-app worktree)
+scripts/issue.sh renew <n>             # at the start of each session on long work
+scripts/issue.sh land <n>              # verify, catch up with main, fast-forward push to it, release the claim
+scripts/issue.sh release <n>           # giving up: push your branch and comment where it stands first
+```
+
+- **A hook enforces it.** `.claude/settings.json` runs `scripts/issue-guard.sh` before every `git commit` and `git push`. It refuses issue work (a branch named `issue-<n>`, or a commit saying `Closes #<n>`) unless this session holds the claim, from the worktree it was claimed for. A chore with no issue (a typo, a dependency bump) needs no claim: keep it off `issue-<n>` branches and out of `Closes` lines. A SessionStart hook lists the current claims.
+- **Only the session that claimed an issue renews, releases or lands it,** and only from its worktree. An existing worktree for an issue you didn't claim is another session's: leave it alone. Never delete another agent's `claim/*` branch.
+- **Claims go stale after 24 hours.** `claim <n> --steal` takes over a stale one; check the issue's comments and `origin/issue-<n>` for work in progress first, and continue from it. Taking a younger claim is Chris's call only: `claim <n> --steal --override "<his reason>"`.
+- Settings for this repo are in `scripts/issue.conf`. The tool is vendored from `skills/setup-claims` in chrischaps/Dashboard: change it there, not here. `bash scripts/issue-test.sh` tests it against a throwaway remote.
+<!-- claims:end -->
