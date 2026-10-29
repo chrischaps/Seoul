@@ -81,7 +81,7 @@ for n in $(printf '%s\n' "${nums[@]}" | sort -un); do
   fi
   [ $? -eq 0 ] && continue
   hint=${claim_hint//<n>/$n}
-  denied+="#$n: ${why:-not claimed by this session}
+  denied+="${why:-#$n is not claimed by this session}
 "
   denied+="  Claim it before working on it: scripts/issue.sh claim $n (makes ../$(basename "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")")-$n), or scripts/issue.sh claim $n --here (for this worktree)${hint:+, or $hint}.
   Exit 2 from claim means another agent holds it: leave it and pick another issue (scripts/issue.sh list shows who holds what).
