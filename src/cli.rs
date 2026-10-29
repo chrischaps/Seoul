@@ -45,6 +45,9 @@ OPTIONS:
                             into screenshots/tour/, then exit. With --preset,
                             only presets whose name contains it.
     --tour-shots <N>        Screenshots per preset during a tour (default 1)
+    --bench <SECS>          Time every preset for SECS seconds with vsync off, log
+                            frame rates into screenshots/bench/, then exit. With
+                            --preset, only presets whose name contains it.
     --no-link               Don't listen for a Soba link (docs/LINK.md); with
                             --synth, also skip its stand-in Soba
     --link-port <PORT>      Listen for the Soba link on this port (default 9137)
@@ -72,6 +75,7 @@ pub struct Args {
     pub screenshot_at: Option<f32>,
     pub tour: Option<f32>,
     pub tour_shots: Option<u32>,
+    pub bench: Option<f32>,
     pub sequence: Option<Vec<String>>,
     pub record: Option<String>,
     pub record_seconds: Option<f32>,
@@ -125,6 +129,7 @@ impl Args {
                 "--screenshot-at" => args.screenshot_at = Some(num(&value("--screenshot-at")?)?),
                 "--tour" => args.tour = Some(num(&value("--tour")?)?),
                 "--tour-shots" => args.tour_shots = Some(value("--tour-shots")?.parse()?),
+                "--bench" => args.bench = Some(num(&value("--bench")?)?),
                 "--sequence" => {
                     args.sequence = Some(value("--sequence")?.split(',').map(|s| s.trim().to_owned()).collect())
                 }

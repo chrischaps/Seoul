@@ -9,7 +9,7 @@ over a warped, fading copy of the frame before it, so the image builds trails
 and keeps moving.
 
 **[Download](https://github.com/chrischaps/Seoul/releases/latest)** for
-Windows or macOS (untested) · [Project page](https://chaps.dev/projects/seoul)
+Windows, macOS (untested) or Linux · [Project page](https://chaps.dev/projects/seoul)
 
 ## Running it
 
@@ -24,6 +24,13 @@ Security → Open Anyway**. Then allow system audio recording when asked. Seoul
 keeps its presets, settings and screenshots in
 `~/Library/Application Support/Seoul`. Fullscreen is ⌃⌘F, and Cmd-Q quits.
 
+**Linux (x86_64 or aarch64, glibc 2.36+):** untar the release and run
+`./seoul --mic`. Linux has no system-audio loopback, so Seoul listens to an
+input. Under PulseAudio or PipeWire, `--input monitor` hears what the
+computer is playing. The aarch64 build is for the Raspberry Pi 5. The HUD
+uses the Noto and DejaVu fonts (`fonts-noto-core fonts-noto-cjk
+fonts-dejavu-core` on Debian and Ubuntu).
+
 | Key | |
 |---|---|
 | Space / Backspace | next / previous preset, in an order reshuffled each lap |
@@ -31,6 +38,8 @@ keeps its presets, settings and screenshots in
 | F · 1–9 · X | favorite · jump to favorite · hide |
 | H · F1 · P | help · stats · screenshot |
 | F11 · Esc | fullscreen · quit |
+
+On a touchscreen, tap for the next preset and tap with two fingers to quit.
 
 `seoul.exe --synth` plays a built-in 124 BPM test track. Use it when nothing
 else is playing.
@@ -59,13 +68,20 @@ cargo run --release               # debug builds are too slow for 60 fps
 cargo test
 .\packaging\package.ps1           # → dist\seoul-<version>-windows-x64.zip
 ./packaging/package-macos.sh      # on a Mac → dist/seoul-<version>-macos-universal.zip
+./packaging/package-linux.sh      # on Linux → dist/seoul-<version>-linux-<arch>.tar.gz
 ```
+
+Linux builds need `pkg-config` and `libasound2-dev`.
+`packaging/linux.Dockerfile` is a Debian bookworm build box that also
+cross-compiles for the Raspberry Pi 5 (`package-linux.sh aarch64`).
+`--bench 8` times every preset with vsync off and saves the frame rates
+to `screenshots/bench/`.
 
 System audio comes in through cpal's loopback capture. That's WASAPI on
 Windows and a CoreAudio process tap on macOS 14.6+. Microphones and line
-inputs use the same cpal host. The HUD uses fonts the OS
-already ships. Every push to `main` builds and tests both platforms in GitHub
-Actions, and pushing a `v*` tag drafts a release with both zips.
+inputs use the same cpal host (ALSA on Linux). The HUD uses fonts the OS
+already ships. Every push to `main` builds and tests all three platforms in
+GitHub Actions, and pushing a `v*` tag drafts a release with every package.
 
 ## Presets
 

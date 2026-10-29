@@ -63,6 +63,9 @@ invariants that keep it all consistent. For writing presets, see
 cpal implements WASAPI loopback implicitly: `build_input_stream` on a
 *render* device, with the config from `default_output_config()`, makes cpal
 set `AUDCLNT_STREAMFLAGS_LOOPBACK`. This is still true in cpal 0.18.
+cpal's ALSA backend on Linux has no loopback, so there `Loopback` fails
+with a message pointing at `--mic` and at PulseAudio/PipeWire monitor
+inputs, and `Capture` keeps retrying it like any unavailable device.
 
 `Capture` opens a `Source`: `Loopback` (the default output, as above) or
 `Input` — the default input device, or the first whose name contains some
@@ -393,9 +396,11 @@ the room-tuned analyzer and asserts each stretch's mood; `mood_report`
 ## HUD
 
 `render/hud.rs` draws after tonemapping, so it never blooms. Text is
-glyphon/cosmic-text over fonts loaded straight from `C:\Windows\Fonts`
-(Bahnschrift, Malgun Gothic for Hangul, Consolas), with a full system scan
-as a fallback. Text buffers re-shape only when their content changes;
+glyphon/cosmic-text over fonts loaded straight from the OS's font folder
+(`render/hud.rs::os`): Bahnschrift, Malgun Gothic for Hangul and Consolas
+on Windows; Avenir Next, Apple SD Gothic Neo and Menlo on macOS; Noto Sans,
+Noto Sans CJK and DejaVu Sans Mono on Linux. A full system scan is the
+fallback. Text buffers re-shape only when their content changes;
 panels and meters are instanced SDF rounded rects (`shaders/hud.wgsl`)
 with premultiplied blending. Elements: startup 서울 wordmark, preset toasts
 (palette-colored accent, drop shadow), key notices, help (H), stats (F1:
@@ -412,6 +417,13 @@ the HUD (the post and HUD passes are re-run offscreen for the last frame).
 - `--tour SECS [--tour-shots N] [--preset filter]`: hard-cut through
   presets, screenshot each into `screenshots/tour/`, exit. The HUD is
   disabled for clean frames.
+- `--bench SECS [--preset filter]`: the tour's route, timing frames
+  instead (`bench.rs`). Vsync is off (`PresentMode::AutoNoVsync`) so the
+  numbers show headroom; the first second on each preset isn't counted.
+  It logs each preset's fps and its slowest one-second window, and saves a
+  CSV, slowest first, to `screenshots/bench/`. A preset "holds 60" when its
+  slowest window does. Single frame times mislead here: with vsync off the
+  GPU queue fills and drains, so frames arrive in fast/slow pairs.
 - `--screenshot-at SECS`, `P`: PNG of the current frame.
 - `--room-sim`, `--evening`: the synth through a simulated room mic, or a
   scripted evening of empty room, talk and a record; `--frame --clock

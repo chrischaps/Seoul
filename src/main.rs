@@ -7,28 +7,32 @@ use tracing::{error, info, warn};
 use triple_buffer::Output;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize, Size};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 mod audio;
+mod bench;
 mod cli;
 mod config;
 mod frame;
 mod preset;
 mod render;
+mod touch;
 
 use crate::audio::AudioFeatures;
 use crate::audio::analysis::RoomStatus;
 use crate::audio::capture::{Capture, Source};
 use crate::audio::link::{Link, LinkSettings, LinkState};
+use crate::bench::Bench;
 use crate::cli::Args;
 use crate::config::{Config, ConfigWatch};
 use crate::frame::{Clock, FrameMode};
 use crate::preset::curation::{Curation, STATE_PATH};
 use crate::preset::library::LibrarySettings;
 use crate::render::{RenderContext, Renderer, RendererOptions};
+use crate::touch::{Gesture, Touches};
 
 /// Merge config with command-line overrides into library behavior.
 fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
@@ -191,7 +195,8 @@ impl AudioInput {
     }
 }
 
-/// `--tour`: visit every preset, screenshot each, exit.
+/// `--tour`: visit every preset, screenshot each, exit. `--bench` is the
+/// same visit, timing frames instead.
 struct Tour {
     dwell: f32,
     /// Screenshots per preset, evenly spaced through the dwell.
@@ -201,6 +206,7 @@ struct Tour {
     since: Instant,
     /// Only visit presets whose name contains this (case-insensitive).
     filter: Option<String>,
+    bench: Option<Bench>,
 }
 
 impl Tour {
@@ -237,6 +243,7 @@ struct App {
     title: String,
     exit_requested: bool,
     modifiers: ModifiersState,
+    touches: Touches,
 }
 
 impl App {
@@ -390,26 +397,53 @@ frame  {}", fm.status());
             }
         }
 
+        let on_preset = self.tour.as_ref().map_or(0.0, |t| t.since.elapsed().as_secs_f32());
+        if let Some(bench) = self.tour.as_mut().and_then(|t| t.bench.as_mut()) {
+            bench.frame(on_preset >= bench::WARMUP);
+        }
         if let Some(tour) = self.tour.as_mut()
-            && tour.since.elapsed().as_secs_f32() >= tour.dwell * (tour.taken + 1) as f32 / tour.shots as f32
+            && on_preset >= tour.dwell * (tour.taken + 1) as f32 / tour.shots as f32
         {
             let lib = renderer.library();
             let name = lib.current_name().to_owned();
-            let slug = name.to_ascii_lowercase().replace(' ', "-");
-            let file = if tour.shots > 1 {
-                format!("{:02}-{slug}-{}.png", tour.index, tour.taken + 1)
+            if let Some(bench) = tour.bench.as_mut() {
+                if let Some(r) = bench.finish(&name) {
+                    info!(
+                        preset = name,
+                        fps = format!("{:.1}", r.fps),
+                        low_fps = format!("{:.1}", r.low_fps),
+                        "bench"
+                    );
+                }
             } else {
-                format!("{:02}-{slug}.png", tour.index)
-            };
-            let path = PathBuf::from("screenshots/tour").join(file);
-            match renderer.screenshot(ctx, &path) {
-                Ok(()) => info!(preset = name, path = %path.display(), "tour screenshot"),
-                Err(e) => warn!("tour screenshot failed: {e:#}"),
+                let slug = name.to_ascii_lowercase().replace(' ', "-");
+                let file = if tour.shots > 1 {
+                    format!("{:02}-{slug}-{}.png", tour.index, tour.taken + 1)
+                } else {
+                    format!("{:02}-{slug}.png", tour.index)
+                };
+                let path = PathBuf::from("screenshots/tour").join(file);
+                match renderer.screenshot(ctx, &path) {
+                    Ok(()) => info!(preset = name, path = %path.display(), "tour screenshot"),
+                    Err(e) => warn!("tour screenshot failed: {e:#}"),
+                }
             }
             tour.taken += 1;
             if tour.taken >= tour.shots {
                 match tour.next_match(renderer.library(), tour.index + 1) {
-                    None => self.exit_requested = true,
+                    None => {
+                        if let Some(bench) = &tour.bench {
+                            let setup = format!(
+                                "{} · {}x{} · render scale {}",
+                                ctx.adapter,
+                                ctx.config.width,
+                                ctx.config.height,
+                                renderer.render_scale()
+                            );
+                            save_bench(bench, &setup);
+                        }
+                        self.exit_requested = true;
+                    }
                     Some(i) => {
                         tour.index = i;
                         tour.taken = 0;
@@ -545,14 +579,15 @@ impl ApplicationHandler for App {
         };
         // Batch runs (recording, tours) shouldn't steal focus from whatever
         // the user is typing into.
-        let batch = self.args.record.is_some() || self.args.tour.is_some();
+        let batch = self.args.record.is_some() || self.args.tour.is_some() || self.args.bench.is_some();
         let attrs = Window::default_attributes()
             .with_title("Seoul")
             .with_inner_size(size)
             .with_active(!batch);
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
 
-        let ctx = pollster::block_on(RenderContext::new(window.clone())).expect("failed to create render context");
+        let ctx = pollster::block_on(RenderContext::new(window.clone(), self.args.bench.is_none()))
+            .expect("failed to create render context");
         let opts = RendererOptions {
             render_scale: self.args.render_scale.unwrap_or(self.config.render_scale),
             library: library_settings(&self.config, &self.args),
@@ -569,7 +604,7 @@ impl ApplicationHandler for App {
                 hud.enabled = true;
                 hud.wordmark_only = true;
             }
-            if self.args.tour.is_some() {
+            if self.args.tour.is_some() || self.args.bench.is_some() {
                 // Clean frames for preset review.
                 hud.enabled = false;
                 hud.skip_intro();
@@ -589,7 +624,7 @@ impl ApplicationHandler for App {
         }
 
         // In a tour, --preset is a name filter, handled below.
-        let start = if self.args.tour.is_some() {
+        let start = if self.args.tour.is_some() || self.args.bench.is_some() {
             None
         } else {
             self.args.preset.as_ref().or(self.config.start_preset.as_ref())
@@ -600,14 +635,20 @@ impl ApplicationHandler for App {
                 None => warn!(preset = name, "no such preset; starting on default"),
             }
         }
-        if let Some(dwell) = self.args.tour {
+        if let Some(dwell) = self.args.tour.or(self.args.bench) {
+            let bench = self.args.tour.is_none().then(Bench::default);
             let mut tour = Tour {
                 dwell,
-                shots: self.args.tour_shots.unwrap_or(1).max(1),
+                shots: if bench.is_some() {
+                    1
+                } else {
+                    self.args.tour_shots.unwrap_or(1).max(1)
+                },
                 taken: 0,
                 index: 0,
                 since: Instant::now(),
                 filter: self.args.preset.clone(),
+                bench,
             };
             match tour.next_match(renderer.library(), 0) {
                 Some(i) => {
@@ -658,6 +699,29 @@ impl ApplicationHandler for App {
                     },
                 ..
             } if !matches!(self.audio, AudioInput::Offline(_)) => self.on_key(event_loop, kc),
+            WindowEvent::Touch(t) if !matches!(self.audio, AudioInput::Offline(_)) => {
+                let now = Instant::now();
+                let gesture = match t.phase {
+                    TouchPhase::Started => {
+                        self.touches.start(t.id, (t.location.x, t.location.y), now);
+                        None
+                    }
+                    TouchPhase::Moved => {
+                        self.touches.moved(t.id, (t.location.x, t.location.y));
+                        None
+                    }
+                    TouchPhase::Ended => self.touches.end(t.id, now),
+                    TouchPhase::Cancelled => {
+                        self.touches.cancel(t.id);
+                        None
+                    }
+                };
+                match gesture {
+                    Some(Gesture::Tap) => self.on_key(event_loop, KeyCode::Space),
+                    Some(Gesture::TwoFingerTap) => event_loop.exit(),
+                    None => {}
+                }
+            }
             WindowEvent::RedrawRequested => {
                 self.render();
                 if self.exit_requested {
@@ -726,6 +790,18 @@ fn mac_support_dir(exe_dir: &Path) -> Option<PathBuf> {
     }
     copy_missing(&resources.join("seoul.toml"), &home.join("seoul.toml"));
     Some(home)
+}
+
+/// Write a finished `--bench` to screenshots/bench/ and log its verdict.
+fn save_bench(bench: &Bench, setup: &str) {
+    let holding = bench.rows.iter().filter(|r| r.holds_60()).count();
+    info!(setup, "bench: {holding} of {} presets hold 60 fps", bench.rows.len());
+    let dir = PathBuf::from("screenshots/bench");
+    let file = dir.join(format!("{}.csv", chrono::Local::now().format("%Y-%m-%d_%H%M%S")));
+    match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&file, bench.csv(setup))) {
+        Ok(()) => info!(path = %file.display(), "bench saved"),
+        Err(e) => warn!("couldn't save the bench: {e}"),
+    }
 }
 
 fn main() -> Result<()> {
@@ -842,6 +918,7 @@ fn main() -> Result<()> {
         title: String::new(),
         exit_requested: false,
         modifiers: ModifiersState::empty(),
+        touches: Touches::default(),
     };
 
     event_loop.run_app(&mut app)?;

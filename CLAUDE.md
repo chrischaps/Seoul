@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback (or a microphone / line-in, with room tuning), extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `main.rs::mac_support_dir`).
+`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback (or a microphone / line-in, with room tuning), extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `main.rs::mac_support_dir`). Linux (x86_64, and aarch64 for the Raspberry Pi 5 frame) builds in a Debian bookworm Docker box; it has no loopback, so it listens to inputs.
 
 Deeper docs: `docs/ARCHITECTURE.md` (threads, analysis math, pass graph, transitions, invariants) and `docs/PRESETS.md` (authoring guide).
 
@@ -31,12 +31,16 @@ cargo run --release -- --help
 # Platforms and releases
 cargo check --release --target aarch64-apple-darwin --target-dir target/macos   # Mac compile check from Windows
 .\packaging\package.ps1          # Windows zip → dist/
-git tag vX.Y.Z && git push --tags  # CI (.github/workflows/build.yml) drafts a release with both zips
+docker build -t seoul-linux -f packaging/linux.Dockerfile packaging              # once
+docker run --rm -v "$PWD:/src" -w /src seoul-linux ./packaging/package-linux.sh aarch64   # Pi 5 tarball → dist/ (no arg: x86_64)
+cargo run --release -- --synth --bench 8 --size 720x1280   # fps per preset, vsync off → screenshots/bench/*.csv
+WGPU_BACKEND=gl ...                # try OpenGL ES instead of Vulkan
+git tag vX.Y.Z && git push --tags  # CI (.github/workflows/build.yml) drafts a release with every package
 ```
 
 `--synth` is a deterministic 124 BPM test track (`src/audio/synth.rs`). Screenshots re-run the display passes offscreen and can be viewed with the Read tool. When a script launches the app, send its output to a file, not a pipe: a full pipe blocks the render thread on logging.
 
-Keys: Space/Backspace next/prev · R shuffle · A auto-advance · L lock · F favorite · X hide · 1–9 favorites · H help · F1 stats · P screenshot · F11 fullscreen · Esc quit.
+Keys: Space/Backspace next/prev · R shuffle · A auto-advance · L lock · F favorite · X hide · 1–9 favorites · H help · F1 stats · P screenshot · F11 fullscreen · Esc quit. Touch (`touch.rs`): tap = next, two-finger tap = quit.
 
 Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-state.toml` (gitignored).
 

@@ -1,5 +1,5 @@
-# Tests and packages Seoul for Windows and macOS on every push to main.
-# Pushing a v* tag also gathers both zips into a draft GitHub release.
+# Tests and packages Seoul for Windows, macOS and Linux on every push to
+# main. Pushing a v* tag also gathers the packages into a draft GitHub release.
 name: Build
 
 on:
@@ -77,9 +77,29 @@ jobs:
           name: macos
           path: dist/*.zip
 
+  # Built in Debian bookworm (packaging/linux.Dockerfile) so the binaries
+  # run on its glibc and newer, Raspberry Pi OS included. x86_64 is built
+  # and tested natively; aarch64 (the Pi 5) is cross-compiled.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t seoul-linux -f packaging/linux.Dockerfile packaging
+      - run: |
+          docker run --rm -v "$PWD:/src" -w /src seoul-linux bash -c '
+            set -e
+            cargo test --release --target-dir target/linux
+            ./packaging/package-linux.sh
+            ./packaging/package-linux.sh aarch64
+            target/linux/release/seoul --help > /dev/null'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos]
+    needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -91,5 +111,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" \
+          gh release create "$TAG" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" \
             --draft --title "Seoul ${TAG#v}" --notes "Draft: notes to follow."

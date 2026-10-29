@@ -4,8 +4,9 @@
 //!
 //! Text is glyphon over fonts the OS already ships, so nothing is bundled:
 //! on Windows Bahnschrift for UI, Malgun Gothic for Hangul and Consolas for
-//! numbers; on macOS Avenir Next, Apple SD Gothic Neo and Menlo. Panels and
-//! meters are instanced SDF rounded rects.
+//! numbers; on macOS Avenir Next, Apple SD Gothic Neo and Menlo; on Linux
+//! Noto Sans, Noto Sans CJK and DejaVu Sans Mono. Panels and meters are
+//! instanced SDF rounded rects.
 
 use bytemuck::{Pod, Zeroable};
 use glyphon::cosmic_text::Align;
@@ -20,7 +21,7 @@ use crate::audio::AudioFeatures;
 use crate::preset::preset::PresetSpec;
 use crate::render::gpu;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 mod os {
     use std::path::PathBuf;
 
@@ -48,6 +49,30 @@ mod os {
 
     pub fn font_dir() -> PathBuf {
         PathBuf::from("/System/Library/Fonts")
+    }
+}
+
+/// Linux has no fonts every install ships, so these are the Debian and
+/// Ubuntu paths of the Noto and DejaVu packages (`fonts-noto-core`,
+/// `fonts-noto-cjk`, `fonts-dejavu-core`); the Raspberry Pi frame installs
+/// them. Missing, the HUD falls back to scanning whatever is there.
+#[cfg(not(any(windows, target_os = "macos")))]
+mod os {
+    use std::path::PathBuf;
+
+    pub const SANS: &str = "Noto Sans";
+    pub const HANGUL: &str = "Noto Sans CJK KR";
+    pub const MONO: &str = "DejaVu Sans Mono";
+    pub const FONT_FILES: &[&str] = &[
+        "truetype/noto/NotoSans-Regular.ttf",
+        "opentype/noto/NotoSansCJK-Regular.ttc",
+        "truetype/dejavu/DejaVuSansMono.ttf",
+        "truetype/dejavu/DejaVuSans.ttf",
+    ];
+    pub const FULLSCREEN_KEY: &str = "F11";
+
+    pub fn font_dir() -> PathBuf {
+        PathBuf::from("/usr/share/fonts")
     }
 }
 

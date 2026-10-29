@@ -143,6 +143,10 @@ impl Renderer {
         self.warmth = warmth.clamp(0.0, 1.0);
     }
 
+    pub fn render_scale(&self) -> f32 {
+        self.render_scale
+    }
+
     pub fn library(&self) -> &PresetLibrary {
         &self.library
     }

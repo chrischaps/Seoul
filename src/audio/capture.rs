@@ -183,6 +183,14 @@ fn find_input(host: &cpal::Host, name: &str) -> Result<cpal::Device> {
 fn open(host: &cpal::Host, source: &Source, room: bool) -> Result<(Active, AudioSource)> {
     let (device, config) = match source {
         Source::Loopback => {
+            // cpal's ALSA backend has no loopback. Under PulseAudio or
+            // PipeWire, a "monitor" input carries what's playing instead.
+            #[cfg(not(any(windows, target_os = "macos")))]
+            return Err(anyhow!(
+                "Linux has no loopback capture: use --mic, or --input with a monitor of \
+                 your output (--list-inputs shows them)"
+            ));
+            #[allow(unreachable_code)]
             let device = host
                 .default_output_device()
                 .ok_or_else(|| anyhow!("no default output device for loopback"))?;
