@@ -106,10 +106,22 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # One checksum file for every asset, in the two-space form that
+      # `sha256sum -c` reads. Easel checks the frame's tarball against it
+      # before installing.
+      - name: Checksum the packages
+        working-directory: dist
+        run: |
+          sha256sum *.zip *.tar.gz > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS
+      # Drafts are hidden from the releases API, so Easel only sees a release
+      # once someone has written its notes and published it by hand.
       - name: Draft the release (notes are written by hand before publishing)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" \
-            --draft --title "Seoul ${TAG#v}" --notes "Draft: notes to follow."
+          gh release create "$TAG" dist/*.zip dist/*.tar.gz dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+            --draft --title "Seoul ${TAG#v}" \
+            --notes "Draft: notes to follow. To check a download: \`sha256sum -c SHA256SUMS --ignore-missing\`"
