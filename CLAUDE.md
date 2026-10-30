@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback, extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `main.rs::mac_support_dir`).
+`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback (or a microphone / line-in, with room tuning), extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `main.rs::mac_support_dir`). Linux (x86_64, and aarch64 for the Raspberry Pi 5 frame) builds in a Debian bookworm Docker box; it has no loopback, so it listens to inputs.
 
 Deeper docs: `docs/ARCHITECTURE.md` (threads, analysis math, pass graph, transitions, invariants) and `docs/PRESETS.md` (authoring guide).
 
@@ -21,23 +21,34 @@ RUST_LOG=seoul=debug cargo run --release
 cargo run --release -- --synth --tour 10 --tour-shots 3 --size 1280x720   # → screenshots/tour/, then exit
 cargo run --release -- --synth --tour 10 --preset ink                     # --preset filters a tour by name
 cargo run --release -- --synth --preset Vortex --screenshot-at 5
+cargo run --release -- --room-sim          # the synth as a mic across the room hears it; --no-room for untuned
+cargo run --release -- --mic               # or --input <NAME>; --list-inputs shows names
+cargo test --release room_report -- --ignored --nocapture   # room tuning's numbers at three mic gains
+cargo run --release -- --frame --evening --clock 22:59     # frame mode through a scripted evening (talk, a record) into sleep
+cargo test --release mood_report -- --ignored --nocapture  # frame mode's mood timeline for that evening
 cargo run --release -- --help
 
 # Platforms and releases
 cargo check --release --target aarch64-apple-darwin --target-dir target/macos   # Mac compile check from Windows
 .\packaging\package.ps1          # Windows zip → dist/
-git tag vX.Y.Z && git push --tags  # CI (.github/workflows/build.yml) drafts a release with both zips
+docker build -t seoul-linux -f packaging/linux.Dockerfile packaging              # once
+docker run --rm -v "$PWD:/src" -w /src seoul-linux ./packaging/package-linux.sh aarch64   # Pi 5 tarball → dist/ (no arg: x86_64)
+cargo run --release -- --synth --bench 8 --size 720x1280   # fps per preset, vsync off → screenshots/bench/*.csv
+WGPU_BACKEND=gl ...                # try OpenGL ES instead of Vulkan
+git tag vX.Y.Z && git push --tags  # CI (.github/workflows/build.yml) drafts a release with every package
 ```
 
 `--synth` is a deterministic 124 BPM test track (`src/audio/synth.rs`). Screenshots re-run the display passes offscreen and can be viewed with the Read tool. When a script launches the app, send its output to a file, not a pipe: a full pipe blocks the render thread on logging.
 
-Keys: Space/Backspace next/prev · R shuffle · A auto-advance · L lock · F favorite · X hide · 1–9 favorites · H help · F1 stats · P screenshot · F11 fullscreen · Esc quit.
+Keys: Space/Backspace next/prev · R shuffle · A auto-advance · L lock · F favorite · X hide · 1–9 favorites · H help · F1 stats · P screenshot · F11 fullscreen · Esc quit. Touch (`touch.rs`): tap = next, two-finger tap = quit.
 
 Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-state.toml` (gitignored).
 
 ## Architecture in brief
 
-- **Threads:** WASAPI callback → ring → analysis thread (`audio/analysis.rs`, pure `Analyzer` on a 256-sample hop; feeds itself real-time zeros when loopback goes quiet) → triple buffer → render thread. `LoopbackCapture` (main thread, polled per frame) reconnects on stream errors and default-device changes.
+- **Threads:** WASAPI callback → ring → analysis thread (`audio/analysis.rs`, pure `Analyzer` on a 256-sample hop; feeds itself real-time zeros when loopback goes quiet) → triple buffer → render thread. `Capture` (main thread, polled per frame) opens a `Source` (loopback, default input, or an input by name) and reconnects on stream errors and default-device changes.
+- **Frame mode** (`frame.rs`, `--frame` / `[frame]`): `MoodTracker` reads resting / listening / playing from the features (music = unbroken sound, sustained sound, a confident groove, or a playing link); `FrameMode` eases a `Look` (scene `speed`, exposure, what presets hear, night `warmth`, sleep fade) that `main.rs` applies via `frame::apply` and `Renderer::set_look`. Details: `docs/ARCHITECTURE.md#frame-mode`.
+- **Room tuning** (`Analyzer::set_room`, on for inputs): a per-bin noise floor subtracted before anything reads the FFT, and a gain that puts the room's noise just under the −50 dBFS floor (lifting a quiet mic, cutting a hot one), so the analysis's absolute thresholds mean "above the room". `presence` gates volume, waveform and onsets. Tested against `RoomSim` (`audio/synth.rs`) at three mic gains. Details: `docs/ARCHITECTURE.md#room-tuning`.
 - **Soba link** (`audio/link.rs`, spec in `docs/LINK.md`): OSC on `127.0.0.1:9137` → `seoul-link` thread → timestamped snapshots → merged into the render thread's copy of `AudioFeatures` after `[link] delay_ms`. It adds `cv1..8`, `gate1..4` (+ `_age`, `_count`), `link_live`, `playing` and `bar`, and Soba's clock overrides tempo detection while playing. `--synth` runs a stand-in Soba (`audio/link_fake.rs`) over real UDP; `--record` folds it in directly; `--no-link` turns both off; `cargo run --example link_send` sends it alone.
 - **Time is stamped on the render thread** (`time`, `dt`, `frame`, `aspect`, `resolution`), never in analysis.
 - **Frame:** warp (per-pixel, per active preset) → particles (compute + sprites, optional) → composite (additive `fs_composite`) → bloom → post (mirror/echo, PBR Neutral tonemap, grade) → HUD. Two ping-pong `Rgba16Float` feedback textures follow the window size.
@@ -54,7 +65,9 @@ Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-st
 
 ## Audio capture gotcha (WASAPI loopback)
 
-cpal's WASAPI backend implements loopback via a specific pattern: call `build_input_stream` **on the default output device**, using the config returned by `default_output_config()` (not `default_input_config()`). The backend detects this combination and sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. If capture ever silently stops working, re-check `src/audio/capture.rs::open_loopback`; the device/config pairing is the load-bearing part. This is still true as of cpal 0.18, which also reports `StreamInvalidated`/`DeviceNotAvailable` on default-device changes; `LoopbackCapture` uses those to reconnect. Default configs may now be I32/F64/I24; the generic `push_mono` handles them all.
+cpal's WASAPI backend implements loopback via a specific pattern: call `build_input_stream` **on the default output device**, using the config returned by `default_output_config()` (not `default_input_config()`). The backend detects this combination and sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. If capture ever silently stops working, re-check the `Source::Loopback` arm of `src/audio/capture.rs::open`; the device/config pairing is the load-bearing part. This is still true as of cpal 0.18, which also reports `StreamInvalidated`/`DeviceNotAvailable` on default-device changes; `Capture` uses those to reconnect.
+
+A muted mic (laptop mute key, privacy shutter, Sound settings) delivers exact digital zeros, not an error: the HUD then says "no signal — is the mic muted?" and the log warns. `RUST_LOG=seoul=debug` logs the input's peak level every 5 s. Default configs may now be I32/F64/I24; the generic `push_mono` handles them all.
 
 <!-- claims:begin (from chrischaps/Dashboard skills/setup-claims; re-run its install.sh to update) -->
 ## Claiming issues

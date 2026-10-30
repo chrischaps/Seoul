@@ -7,25 +7,32 @@ use tracing::{error, info, warn};
 use triple_buffer::Output;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize, Size};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 mod audio;
+mod bench;
 mod cli;
 mod config;
+mod frame;
 mod preset;
 mod render;
+mod touch;
 
 use crate::audio::AudioFeatures;
-use crate::audio::capture::LoopbackCapture;
+use crate::audio::analysis::RoomStatus;
+use crate::audio::capture::{Capture, Source};
 use crate::audio::link::{Link, LinkSettings, LinkState};
+use crate::bench::Bench;
 use crate::cli::Args;
 use crate::config::{Config, ConfigWatch};
+use crate::frame::{Clock, FrameMode};
 use crate::preset::curation::{Curation, STATE_PATH};
 use crate::preset::library::LibrarySettings;
 use crate::render::{RenderContext, Renderer, RendererOptions};
+use crate::touch::{Gesture, Touches};
 
 /// Merge config with command-line overrides into library behavior.
 fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
@@ -36,6 +43,7 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
         auto_max: cfg.auto.max_interval.max(cfg.auto.min_interval),
         transition_styles: cfg.transition.styles().unwrap_or_default(),
         transition_duration: cfg.transition.duration,
+        favorites_only: false,
     };
     if let Some(secs) = args.auto {
         s.auto_advance = true;
@@ -47,6 +55,11 @@ fn library_settings(cfg: &Config, args: &Args) -> LibrarySettings {
             Ok(styles) => s.transition_styles = styles,
             Err(e) => warn!("--transition: {e}; using config"),
         }
+    }
+    // A frame on the wall changes pictures by itself.
+    if frame_on(cfg, args) {
+        s.auto_advance = true;
+        s.favorites_only = cfg.frame.playlist == config::Playlist::Favorites;
     }
     s
 }
@@ -60,12 +73,50 @@ fn link_settings(cfg: &Config, args: &Args) -> LinkSettings {
     }
 }
 
+/// Merge config with command-line overrides into the live audio source and
+/// whether it gets room tuning. Loopback is a direct feed, never tuned.
+fn capture_source(cfg: &Config, args: &Args) -> (Source, bool) {
+    let source = if let Some(name) = &args.input {
+        Source::Input(Some(name.clone()))
+    } else if args.mic {
+        Source::Input(None)
+    } else {
+        match cfg.audio.source {
+            config::AudioSourceKind::Loopback => Source::Loopback,
+            config::AudioSourceKind::Input => {
+                Source::Input(cfg.audio.device.clone().filter(|d| !d.trim().is_empty()))
+            }
+        }
+    };
+    let room = source != Source::Loopback && cfg.audio.room && !args.no_room;
+    (source, room)
+}
+
+/// Whether the test track gets room tuning: only when it's heard through
+/// the simulated room.
+fn synth_room(args: &Args) -> bool {
+    args.room_sim && !args.no_room
+}
+
+/// The test track these flags ask for.
+fn test_track(args: &Args) -> audio::synth::TestTrack {
+    if args.evening {
+        audio::synth::TestTrack::evening()
+    } else {
+        audio::synth::TestTrack::new(args.room_sim)
+    }
+}
+
+fn frame_on(cfg: &Config, args: &Args) -> bool {
+    args.frame || cfg.frame.enabled
+}
+
 /// `--record`: renders offline at a fixed timestep. The synth track is
 /// generated and analyzed in lockstep — exactly one frame of audio per
 /// rendered frame — so the footage is smooth and beat-locked no matter how
 /// long a frame takes to save.
 struct Recorder {
-    synth: audio::synth::Synth,
+    synth: audio::synth::TestTrack,
     analyzer: audio::analysis::Analyzer,
     dir: PathBuf,
     fps: f32,
@@ -78,10 +129,12 @@ struct Recorder {
 }
 
 impl Recorder {
-    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool) -> Self {
+    fn new(dir: PathBuf, seconds: f32, fps: f32, link: bool, synth: audio::synth::TestTrack, room: bool) -> Self {
+        let mut analyzer = audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE);
+        analyzer.set_room(room);
         Self {
-            synth: audio::synth::Synth::default(),
-            analyzer: audio::analysis::Analyzer::new(audio::synth::SAMPLE_RATE),
+            synth,
+            analyzer,
             dir,
             fps,
             frame: 0,
@@ -125,23 +178,25 @@ impl Recorder {
     }
 }
 
-/// Where audio comes from. Loopback must be polled on this thread because
-/// cpal streams are `!Send`; the synth runs entirely on its own thread.
+/// Where audio comes from. Live capture must be polled on this thread
+/// because cpal streams are `!Send`; the synth runs entirely on its own
+/// thread.
 enum AudioInput {
-    Loopback(Box<LoopbackCapture>),
+    Live(Box<Capture>),
     Synth,
     Offline(Box<Recorder>),
 }
 
 impl AudioInput {
     fn poll(&mut self) {
-        if let AudioInput::Loopback(c) = self {
+        if let AudioInput::Live(c) = self {
             c.poll();
         }
     }
 }
 
-/// `--tour`: visit every preset, screenshot each, exit.
+/// `--tour`: visit every preset, screenshot each, exit. `--bench` is the
+/// same visit, timing frames instead.
 struct Tour {
     dwell: f32,
     /// Screenshots per preset, evenly spaced through the dwell.
@@ -151,6 +206,7 @@ struct Tour {
     since: Instant,
     /// Only visit presets whose name contains this (case-insensitive).
     filter: Option<String>,
+    bench: Option<Bench>,
 }
 
 impl Tour {
@@ -172,6 +228,10 @@ struct App {
     ctx: Option<RenderContext>,
     renderer: Option<Renderer>,
     features: Output<AudioFeatures>,
+    room_meter: Arc<audio::analysis::RoomMeter>,
+    /// Frame mode (`--frame` or `[frame] enabled`).
+    frame: Option<FrameMode>,
+    last_frame: Option<Instant>,
     audio: AudioInput,
     link: Link,
     fullscreen: bool,
@@ -183,6 +243,7 @@ struct App {
     title: String,
     exit_requested: bool,
     modifiers: ModifiersState,
+    touches: Touches,
 }
 
 impl App {
@@ -198,6 +259,15 @@ impl App {
                 r.library_mut().set_settings(settings);
             }
             self.link.configure(link_settings(&cfg, &self.args));
+            if let Some(fm) = self.frame.as_mut()
+                && let Ok(settings) = cfg.frame.settings()
+            {
+                fm.settings = settings;
+            }
+            if let AudioInput::Live(c) = &mut self.audio {
+                let (source, room) = capture_source(&cfg, &self.args);
+                c.set_source(source, room);
+            }
             self.config = cfg;
         }
 
@@ -212,10 +282,56 @@ impl App {
             _ => (*self.features.read(), self.link.now()),
         };
         self.link.apply(&mut features, link_now);
-        let status = match &self.audio {
-            AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
-            AudioInput::Loopback(c) => c.device_name().map_or_else(|| "no audio — retrying".to_owned(), str::to_owned),
+
+        // Frame mode reads the room as analysed, then decides what presets
+        // hear and how the picture moves.
+        let now = Instant::now();
+        let real_dt = match &self.audio {
+            AudioInput::Offline(rec) => 1.0 / rec.fps,
+            _ => self.last_frame.map_or(1.0 / 60.0, |t| (now - t).as_secs_f32().min(0.1)),
         };
+        self.last_frame = Some(now);
+        if let Some(fm) = self.frame.as_mut() {
+            let before = fm.mood();
+            let look = fm.update(&features, real_dt);
+            if fm.mood() != before {
+                // A recording's frame number places the change in the footage.
+                let frame = match &self.audio {
+                    AudioInput::Offline(rec) => Some(rec.frame),
+                    _ => None,
+                };
+                info!(mood = fm.mood().label(), ?frame, "frame mood");
+            }
+            frame::apply(&look, &mut features);
+            renderer.set_look(look.speed, look.exposure, look.warmth);
+        }
+
+        let mut status = match &self.audio {
+            AudioInput::Synth | AudioInput::Offline(_) if self.args.room_sim => "synth, across a room".to_owned(),
+            AudioInput::Synth | AudioInput::Offline(_) => "synth test track".to_owned(),
+            AudioInput::Live(c) => match (c.device_name(), c.source()) {
+                (None, _) => "no audio — retrying".to_owned(),
+                (Some(name), Source::Loopback) => name.to_owned(),
+                (Some(name), Source::Input(_)) => format!("in · {name}"),
+            },
+        };
+        let room = match &self.audio {
+            AudioInput::Offline(rec) => rec.analyzer.room_status(),
+            _ => self.room_meter.get(),
+        };
+        status += &match room {
+            None => String::new(),
+            Some(RoomStatus::Learning) => "\nroom   learning the room…".to_owned(),
+            Some(RoomStatus::NoSignal) => "\nroom   no signal — is the mic muted?".to_owned(),
+            // Whole dB, so the HUD only re-lays-out when something moves.
+            Some(RoomStatus::Tuned { gain_db, noise_db }) => {
+                format!("\nroom   {gain_db:+.0} dB gain · floor {noise_db:.0} dB")
+            }
+        };
+        if let Some(fm) = &self.frame {
+            status += &format!("
+frame  {}", fm.status());
+        }
         renderer.hud_mut().set_audio_status(&status);
         renderer.hud_mut().set_link_status(&self.link.status_line(&features));
 
@@ -281,26 +397,53 @@ impl App {
             }
         }
 
+        let on_preset = self.tour.as_ref().map_or(0.0, |t| t.since.elapsed().as_secs_f32());
+        if let Some(bench) = self.tour.as_mut().and_then(|t| t.bench.as_mut()) {
+            bench.frame(on_preset >= bench::WARMUP);
+        }
         if let Some(tour) = self.tour.as_mut()
-            && tour.since.elapsed().as_secs_f32() >= tour.dwell * (tour.taken + 1) as f32 / tour.shots as f32
+            && on_preset >= tour.dwell * (tour.taken + 1) as f32 / tour.shots as f32
         {
             let lib = renderer.library();
             let name = lib.current_name().to_owned();
-            let slug = name.to_ascii_lowercase().replace(' ', "-");
-            let file = if tour.shots > 1 {
-                format!("{:02}-{slug}-{}.png", tour.index, tour.taken + 1)
+            if let Some(bench) = tour.bench.as_mut() {
+                if let Some(r) = bench.finish(&name) {
+                    info!(
+                        preset = name,
+                        fps = format!("{:.1}", r.fps),
+                        low_fps = format!("{:.1}", r.low_fps),
+                        "bench"
+                    );
+                }
             } else {
-                format!("{:02}-{slug}.png", tour.index)
-            };
-            let path = PathBuf::from("screenshots/tour").join(file);
-            match renderer.screenshot(ctx, &path) {
-                Ok(()) => info!(preset = name, path = %path.display(), "tour screenshot"),
-                Err(e) => warn!("tour screenshot failed: {e:#}"),
+                let slug = name.to_ascii_lowercase().replace(' ', "-");
+                let file = if tour.shots > 1 {
+                    format!("{:02}-{slug}-{}.png", tour.index, tour.taken + 1)
+                } else {
+                    format!("{:02}-{slug}.png", tour.index)
+                };
+                let path = PathBuf::from("screenshots/tour").join(file);
+                match renderer.screenshot(ctx, &path) {
+                    Ok(()) => info!(preset = name, path = %path.display(), "tour screenshot"),
+                    Err(e) => warn!("tour screenshot failed: {e:#}"),
+                }
             }
             tour.taken += 1;
             if tour.taken >= tour.shots {
                 match tour.next_match(renderer.library(), tour.index + 1) {
-                    None => self.exit_requested = true,
+                    None => {
+                        if let Some(bench) = &tour.bench {
+                            let setup = format!(
+                                "{} · {}x{} · render scale {}",
+                                ctx.adapter,
+                                ctx.config.width,
+                                ctx.config.height,
+                                renderer.render_scale()
+                            );
+                            save_bench(bench, &setup);
+                        }
+                        self.exit_requested = true;
+                    }
                     Some(i) => {
                         tour.index = i;
                         tour.taken = 0;
@@ -317,6 +460,11 @@ impl App {
             self.title = title;
         }
 
+        // Asleep and faded out: a few frames a second keep listening for a
+        // record that would wake it, without running the GPU flat out.
+        if self.frame.as_ref().is_some_and(FrameMode::is_dark) && !matches!(self.audio, AudioInput::Offline(_)) {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
         window.request_redraw();
     }
 
@@ -431,14 +579,15 @@ impl ApplicationHandler for App {
         };
         // Batch runs (recording, tours) shouldn't steal focus from whatever
         // the user is typing into.
-        let batch = self.args.record.is_some() || self.args.tour.is_some();
+        let batch = self.args.record.is_some() || self.args.tour.is_some() || self.args.bench.is_some();
         let attrs = Window::default_attributes()
             .with_title("Seoul")
             .with_inner_size(size)
             .with_active(!batch);
         let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
 
-        let ctx = pollster::block_on(RenderContext::new(window.clone())).expect("failed to create render context");
+        let ctx = pollster::block_on(RenderContext::new(window.clone(), self.args.bench.is_none()))
+            .expect("failed to create render context");
         let opts = RendererOptions {
             render_scale: self.args.render_scale.unwrap_or(self.config.render_scale),
             library: library_settings(&self.config, &self.args),
@@ -451,7 +600,11 @@ impl ApplicationHandler for App {
             hud.enabled = self.config.hud.enabled;
             hud.show_stats = self.config.hud.stats;
             hud.toast_seconds = self.config.hud.toast_seconds;
-            if self.args.tour.is_some() {
+            if self.frame.is_some() {
+                hud.enabled = true;
+                hud.wordmark_only = true;
+            }
+            if self.args.tour.is_some() || self.args.bench.is_some() {
                 // Clean frames for preset review.
                 hud.enabled = false;
                 hud.skip_intro();
@@ -471,7 +624,7 @@ impl ApplicationHandler for App {
         }
 
         // In a tour, --preset is a name filter, handled below.
-        let start = if self.args.tour.is_some() {
+        let start = if self.args.tour.is_some() || self.args.bench.is_some() {
             None
         } else {
             self.args.preset.as_ref().or(self.config.start_preset.as_ref())
@@ -482,14 +635,20 @@ impl ApplicationHandler for App {
                 None => warn!(preset = name, "no such preset; starting on default"),
             }
         }
-        if let Some(dwell) = self.args.tour {
+        if let Some(dwell) = self.args.tour.or(self.args.bench) {
+            let bench = self.args.tour.is_none().then(Bench::default);
             let mut tour = Tour {
                 dwell,
-                shots: self.args.tour_shots.unwrap_or(1).max(1),
+                shots: if bench.is_some() {
+                    1
+                } else {
+                    self.args.tour_shots.unwrap_or(1).max(1)
+                },
                 taken: 0,
                 index: 0,
                 since: Instant::now(),
                 filter: self.args.preset.clone(),
+                bench,
             };
             match tour.next_match(renderer.library(), 0) {
                 Some(i) => {
@@ -508,7 +667,7 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.ctx = Some(ctx);
         self.renderer = Some(renderer);
-        if self.args.fullscreen || self.config.fullscreen {
+        if self.args.fullscreen || self.config.fullscreen || (self.frame.is_some() && !batch) {
             self.toggle_fullscreen_on(self.config.monitor, event_loop);
         }
     }
@@ -540,6 +699,29 @@ impl ApplicationHandler for App {
                     },
                 ..
             } if !matches!(self.audio, AudioInput::Offline(_)) => self.on_key(event_loop, kc),
+            WindowEvent::Touch(t) if !matches!(self.audio, AudioInput::Offline(_)) => {
+                let now = Instant::now();
+                let gesture = match t.phase {
+                    TouchPhase::Started => {
+                        self.touches.start(t.id, (t.location.x, t.location.y), now);
+                        None
+                    }
+                    TouchPhase::Moved => {
+                        self.touches.moved(t.id, (t.location.x, t.location.y));
+                        None
+                    }
+                    TouchPhase::Ended => self.touches.end(t.id, now),
+                    TouchPhase::Cancelled => {
+                        self.touches.cancel(t.id);
+                        None
+                    }
+                };
+                match gesture {
+                    Some(Gesture::Tap) => self.on_key(event_loop, KeyCode::Space),
+                    Some(Gesture::TwoFingerTap) => event_loop.exit(),
+                    None => {}
+                }
+            }
             WindowEvent::RedrawRequested => {
                 self.render();
                 if self.exit_requested {
@@ -610,6 +792,18 @@ fn mac_support_dir(exe_dir: &Path) -> Option<PathBuf> {
     Some(home)
 }
 
+/// Write a finished `--bench` to screenshots/bench/ and log its verdict.
+fn save_bench(bench: &Bench, setup: &str) {
+    let holding = bench.rows.iter().filter(|r| r.holds_60()).count();
+    info!(setup, "bench: {holding} of {} presets hold 60 fps", bench.rows.len());
+    let dir = PathBuf::from("screenshots/bench");
+    let file = dir.join(format!("{}.csv", chrono::Local::now().format("%Y-%m-%d_%H%M%S")));
+    match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&file, bench.csv(setup))) {
+        Ok(()) => info!(path = %file.display(), "bench saved"),
+        Err(e) => warn!("couldn't save the bench: {e}"),
+    }
+}
+
 fn main() -> Result<()> {
     #[cfg(windows)]
     release_own_console();
@@ -617,6 +811,16 @@ fn main() -> Result<()> {
     let Some(args) = Args::parse()? else {
         return Ok(());
     };
+    if args.list_inputs {
+        let names = audio::capture::input_device_names()?;
+        if names.is_empty() {
+            println!("no input devices");
+        }
+        for (name, is_default) in names {
+            println!("{name}{}", if is_default { "  (default)" } else { "" });
+        }
+        return Ok(());
+    }
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "seoul=info,wgpu_core=warn,wgpu_hal=warn".into());
@@ -641,7 +845,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let (features, source_tx) = audio::analysis::spawn_analysis();
+    let (features, source_tx, room_meter) = audio::analysis::spawn_analysis();
     let audio = if let Some(dir) = &args.record {
         let dir = PathBuf::from(dir);
         std::fs::create_dir_all(&dir)?;
@@ -651,13 +855,31 @@ fn main() -> Result<()> {
             args.record_seconds.unwrap_or(10.0),
             fps,
             !args.no_link,
+            test_track(&args),
+            synth_room(&args),
         )))
     } else if args.synth {
-        audio::synth::spawn_synth(source_tx);
+        audio::synth::spawn_synth(source_tx, test_track(&args), synth_room(&args));
         AudioInput::Synth
     } else {
-        AudioInput::Loopback(Box::new(LoopbackCapture::new(source_tx)))
+        let (source, room) = capture_source(&config, &args);
+        AudioInput::Live(Box::new(Capture::new(source_tx, source, room)))
     };
+
+    let frame = frame_on(&config, &args).then(|| {
+        let settings = config.frame.settings().unwrap_or_else(|e| {
+            warn!("{e:#}; using the default times");
+            Default::default()
+        });
+        // Recordings are repeatable: without --clock they happen at noon.
+        let clock = match (args.clock, args.record.is_some()) {
+            (Some(m), _) => Clock::Fixed(m),
+            (None, true) => Clock::Fixed(12.0 * 60.0),
+            (None, false) => Clock::Local,
+        };
+        info!(?settings, ?clock, "frame mode");
+        FrameMode::new(settings, clock)
+    });
 
     let link = if args.record.is_some() {
         Link::offline()
@@ -683,6 +905,9 @@ fn main() -> Result<()> {
         ctx: None,
         renderer: None,
         features,
+        room_meter,
+        frame,
+        last_frame: None,
         audio,
         link,
         fullscreen: false,
@@ -693,6 +918,7 @@ fn main() -> Result<()> {
         title: String::new(),
         exit_requested: false,
         modifiers: ModifiersState::empty(),
+        touches: Touches::default(),
     };
 
     event_loop.run_app(&mut app)?;

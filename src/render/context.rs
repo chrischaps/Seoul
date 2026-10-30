@@ -11,18 +11,23 @@ pub struct RenderContext {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub size: PhysicalSize<u32>,
+    /// The GPU and backend, as "name (Vulkan)".
+    pub adapter: String,
     // Kept alive to anchor the surface's 'static lifetime.
     #[allow(dead_code)]
     window: Arc<Window>,
 }
 
 impl RenderContext {
-    pub async fn new(window: Arc<Window>) -> Result<Self> {
+    /// Without `vsync` (`--bench`), frames present as fast as the GPU
+    /// draws them, where the surface allows it.
+    pub async fn new(window: Arc<Window>, vsync: bool) -> Result<Self> {
         let size = window.inner_size();
         let size = PhysicalSize::new(size.width.max(1), size.height.max(1));
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            // WGPU_BACKEND=gl tries OpenGL ES, for GPUs whose Vulkan falls short.
+            backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
@@ -40,6 +45,7 @@ impl RenderContext {
             .await
             .context("no compatible GPU adapter")?;
 
+        let adapter_name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
         info!(
             adapter = %adapter.get_info().name,
             backend = ?adapter.get_info().backend,
@@ -50,7 +56,9 @@ impl RenderContext {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("seoul-device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                // The default limits, lowered where the GPU falls short: the
+                // Raspberry Pi 5's V3D passes 15 inter-stage variables, not 16.
+                required_limits: wgpu::Limits::default().or_worse_values_from(&adapter.limits()),
                 ..Default::default()
             })
             .await
@@ -70,7 +78,7 @@ impl RenderContext {
             color_space: wgpu::SurfaceColorSpace::Auto,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: if vsync { wgpu::PresentMode::Fifo } else { wgpu::PresentMode::AutoNoVsync },
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
@@ -85,6 +93,7 @@ impl RenderContext {
             queue,
             config,
             size,
+            adapter: adapter_name,
             window,
         })
     }

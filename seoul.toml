@@ -37,6 +37,29 @@ enabled = true
 stats = false          # F1 toggles live
 toast_seconds = 3.0
 
+[audio]
+# "loopback" listens to what this computer plays. "input" listens to a
+# microphone or line-in, so Seoul hears the room. `seoul --list-inputs`
+# shows the device names; --mic and --input <NAME> override this.
+source = "loopback"
+# device = "USB"       # input only: first device whose name contains this
+# Room tuning for inputs: learns the room's noise floor and slowly lifts
+# quiet sound. Turn it off for a clean line-in feed.
+room = true
+
+[frame]
+# Seoul as a picture on the wall (or start with --frame): fullscreen, no
+# HUD or cursor, presets advance on their own. When the room is quiet the
+# picture rests, slow and dim; talk lifts it a little; music plays it fully.
+enabled = false
+# "favorites" plays only your favorites (F), once there are any; or "all".
+playlist = "favorites"
+# A warmer, dimmer grade from `night`; the screen sleeps from `sleep` until
+# `wake`. A record played in the sleep window still wakes it.
+night = "20:00"
+sleep = "23:00"
+wake = "07:00"
+
 [link]
 # Listen for a Soba patch (or any OSC sender) on 127.0.0.1. See docs/LINK.md.
 enabled = true

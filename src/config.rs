@@ -13,6 +13,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::audio::link::LinkSettings;
+use crate::frame::{self, FrameSettings};
 use crate::preset::transition::TransitionStyle;
 use crate::render::post::PostParams;
 
@@ -33,6 +34,8 @@ pub struct Config {
     pub post: PostDefaults,
     pub hud: HudConfig,
     pub link: LinkConfig,
+    pub audio: AudioConfig,
+    pub frame: FrameConfig,
 }
 
 impl Default for Config {
@@ -47,8 +50,85 @@ impl Default for Config {
             post: PostDefaults::default(),
             hud: HudConfig::default(),
             link: LinkConfig::default(),
+            audio: AudioConfig::default(),
+            frame: FrameConfig::default(),
         }
     }
+}
+
+/// Frame mode: Seoul as a picture on the wall (`--frame`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FrameConfig {
+    pub enabled: bool,
+    pub playlist: Playlist,
+    /// "HH:MM": the night grade from `night`; dark from `sleep` to `wake`.
+    pub night: String,
+    pub sleep: String,
+    pub wake: String,
+}
+
+impl Default for FrameConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            playlist: Playlist::Favorites,
+            night: "20:00".into(),
+            sleep: "23:00".into(),
+            wake: "07:00".into(),
+        }
+    }
+}
+
+impl FrameConfig {
+    pub fn settings(&self) -> Result<FrameSettings> {
+        let t = |name: &str, s: &str| frame::parse_clock(s).ok_or_else(|| anyhow!("[frame] {name} = \"{s}\" (want HH:MM)"));
+        Ok(FrameSettings {
+            night: t("night", &self.night)?,
+            sleep: t("sleep", &self.sleep)?,
+            wake: t("wake", &self.wake)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Playlist {
+    /// Favorites only, once there are any.
+    Favorites,
+    All,
+}
+
+/// Where live audio comes from.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AudioConfig {
+    pub source: AudioSourceKind,
+    /// For `source = "input"`: the first device whose name contains this
+    /// text. Unset means the system's default input.
+    pub device: Option<String>,
+    /// Room tuning for inputs: a learned noise floor and a slow gain, for a
+    /// microphone across the room. Turn off for a clean line-in feed.
+    pub room: bool,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            source: AudioSourceKind::Loopback,
+            device: None,
+            room: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioSourceKind {
+    /// What the computer is playing.
+    Loopback,
+    /// A microphone or line-in.
+    Input,
 }
 
 /// The Soba link (`docs/LINK.md`).
@@ -186,6 +266,7 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let cfg: Config = toml::from_str(text)?;
         cfg.transition.styles()?;
+        cfg.frame.settings()?;
         Ok(cfg)
     }
 
@@ -301,6 +382,31 @@ mod tests {
         assert_eq!(c.link.port, 9137);
         let c = Config::parse("[link]\nport = 9200\ndelay_ms = 45\n").unwrap();
         assert_eq!((c.link.port, c.link.delay_ms), (9200, 45.0));
+    }
+
+    #[test]
+    fn audio_section() {
+        let c = Config::parse("").unwrap();
+        assert_eq!(c.audio.source, AudioSourceKind::Loopback);
+        assert!(c.audio.room && c.audio.device.is_none());
+        let c = Config::parse("[audio]\nsource = \"input\"\ndevice = \"USB\"\nroom = false\n").unwrap();
+        assert_eq!(c.audio.source, AudioSourceKind::Input);
+        assert_eq!(c.audio.device.as_deref(), Some("USB"));
+        assert!(!c.audio.room);
+        assert!(Config::parse("[audio]\nsource = \"mic\"\n").is_err());
+    }
+
+    #[test]
+    fn frame_section() {
+        let c = Config::parse("").unwrap();
+        assert!(!c.frame.enabled);
+        assert_eq!(c.frame.playlist, Playlist::Favorites);
+        assert_eq!(c.frame.settings().unwrap(), FrameSettings::default());
+        let c = Config::parse("[frame]\nenabled = true\nplaylist = \"all\"\nsleep = \"00:30\"\n").unwrap();
+        assert!(c.frame.enabled && c.frame.playlist == Playlist::All);
+        assert_eq!(c.frame.settings().unwrap().sleep, 30.0);
+        assert!(Config::parse("[frame]\nwake = \"7am\"\n").is_err());
+        assert!(Config::parse("[frame]\nplaylist = \"random\"\n").is_err());
     }
 
     #[test]

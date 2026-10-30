@@ -10,6 +10,7 @@ invariants that keep it all consistent. For writing presets, see
 - [Thread topology](#thread-topology)
 - [Audio capture](#audio-capture)
 - [Feature extraction](#feature-extraction)
+- [Room tuning](#room-tuning)
 - [`AudioFeatures`: CPU snapshot and GPU layout](#audiofeatures-cpu-snapshot-and-gpu-layout)
 - [Timing model](#timing-model)
 - [Render pass graph](#render-pass-graph)
@@ -17,6 +18,7 @@ invariants that keep it all consistent. For writing presets, see
 - [Preset system](#preset-system)
 - [Hot reload](#hot-reload)
 - [Curation, auto-advance, config](#curation-auto-advance-config)
+- [Frame mode](#frame-mode)
 - [HUD](#hud)
 - [Verification tooling](#verification-tooling)
 - [Invariants checklist](#invariants-checklist)
@@ -29,7 +31,7 @@ invariants that keep it all consistent. For writing presets, see
  WASAPI callback ──ring (f32 mono)──▶ analysis thread ──triple buffer──▶ render thread
  (cpal, realtime)                     (Analyzer, ~5.8 ms hop)            (winit loop, wgpu)
         ▲                                     ▲
-        └──── LoopbackCapture (main thread) ──┘  sends a new ring on (re)connect
+        └─────── Capture (main thread) ───────┘  sends a new ring on (re)connect
 
  Soba (OSC/UDP 127.0.0.1:9137) ──▶ link thread ──snapshots (mpsc)──▶ render thread
                                    (LinkState, gate edges)         (merged after `delay_ms`)
@@ -43,7 +45,7 @@ invariants that keep it all consistent. For writing presets, see
   new `AudioSource`s (ring + sample rate) over an mpsc channel whenever
   capture reconnects, rebuilding the analyzer if the rate changes.
 - **Render thread** (`main.rs`, `render/`): owns the window, polls capture,
-  reads the latest features, renders. `--synth` replaces loopback with a
+  reads the latest features, renders. `--synth` replaces capture with a
   generator thread (`audio/synth.rs`) feeding the same channel.
 - **Link thread** (`audio/link.rs`): receives the Soba link's OSC on
   `127.0.0.1`, folds messages into a `LinkState` (counting gate rising
@@ -61,16 +63,28 @@ invariants that keep it all consistent. For writing presets, see
 cpal implements WASAPI loopback implicitly: `build_input_stream` on a
 *render* device, with the config from `default_output_config()`, makes cpal
 set `AUDCLNT_STREAMFLAGS_LOOPBACK`. This is still true in cpal 0.18.
+cpal's ALSA backend on Linux has no loopback, so there `Loopback` fails
+with a message pointing at `--mic` and at PulseAudio/PipeWire monitor
+inputs, and `Capture` keeps retrying it like any unavailable device.
 
-`LoopbackCapture` lives on the main thread (cpal streams are `!Send`) and
-is polled every frame:
+`Capture` opens a `Source`: `Loopback` (the default output, as above) or
+`Input` — the default input device, or the first whose name contains some
+text (`--mic`, `--input <NAME>`, `[audio]` in `seoul.toml`; `--list-inputs`
+prints the names). An input uses `default_input_config()` and goes through
+the same downmix. Inputs are flagged for [room tuning](#room-tuning) unless
+`[audio] room = false` or `--no-room`.
+
+`Capture` lives on the main thread (cpal streams are `!Send`) and is polled
+every frame:
 
 - The stream's error callback sets an atomic flag for anything but `Xrun`.
   cpal 0.18 reports `StreamInvalidated` / `DeviceNotAvailable` when the
-  default output device changes; the flag triggers a reconnect after 250 ms.
+  default device changes; the flag triggers a reconnect after 250 ms.
 - Every 2 s it also compares the default device's id with the active one
-  (belt and braces).
+  (belt and braces). A device picked by name isn't followed; if it goes
+  missing, the retry below finds it when it's plugged back in.
 - With no device, the app runs on silence and retries every 2 s.
+- A config reload that changes `[audio]` reopens capture (`set_source`).
 
 ## Feature extraction
 
@@ -100,6 +114,67 @@ envelope decays exactly as it would on digital silence; nothing latches.
 Tests (`audio::analysis::tests`) cover silence, sub-floor noise, kick
 detection at 100/120/140 BPM, envelope decay, waveform stability, taper,
 and per-band balance.
+
+## Room tuning
+
+A microphone across the room hears the music 30 dB or more down, with
+little bass, over a steady bed of noise (fans, traffic, its own hiss).
+Untuned, that fails one of two ways depending on the mic's gain: a quiet
+mic puts the music under the −50 dBFS floor and every band reads zero (the
+picture sits dark, though tempo still locks — log flux is level-blind); a
+hot mic puts the room's noise above the floor, and the AGC stretches it
+into a picture that twitches in an empty room.
+
+`Analyzer::set_room(true)` adds a `Room` stage between the FFT and
+everything that reads it:
+
+1. **Noise floor per bin.** Each bin's power is smoothed (τ 100 ms) and a
+   floor is tracked beneath it: it falls toward quieter moments (τ 0.5 s)
+   and rises under steady sound at a rate set by whether anything is
+   happening. The room is what doesn't change: after 3 s with no detected
+   onset (a fan switching on) it rises at 1 dB/s; while onsets keep coming
+   it creeps at 0.05 dB/s, so a record's pad and bassline aren't taken for
+   the room. The first 0.5 s primes it (the window has only just filled),
+   and digital silence — a muted mic — holds it rather than teaching it
+   zero. 1.5× the floor is subtracted from every bin's power before bands,
+   spectrum and onsets see it. `presence` is the share of the smoothed
+   power above that (0..1, square-rooted); a single hop's power swings too
+   far above its floor to tell the room from music.
+2. **Gain, lifted or cut.** The gain puts the room's noise floor (its
+   loudest band) 3 dB *under* the analysis floor: lifting a quiet mic,
+   cutting a hot one (−40…+36 dB, easing over ~3 s up and 0.5 s down).
+   Every absolute threshold downstream then means "above the room",
+   whatever the mic's gain. It depends on the room alone, so loud talk
+   can't hold it down for the record that follows.
+3. **The spectrum is measured against the room.** The direct feed's
+   absolute scale (a −35 dB reference floor) doesn't carry over: a room's
+   music sits 30–40 dB lower per bin than in its bands, which sum many
+   bins, and its noise piles up at one end. Each of the 64 bins instead
+   shows its smoothed power over its learned floor, mapped from 3 dB above
+   it (nothing) to 21 dB (full), so an empty room reads zero everywhere.
+4. **Presence gates the rest.** `volume` comes from raw samples, so it's
+   scaled by `presence`. The waveform (whose own AGC would draw hiss full
+   height) and onset strengths are multiplied by `smoothstep(0.3, 0.7,
+   presence)`, since what's left of the noise after subtraction still
+   flickers and log flux turns flicker into beats.
+
+The trade-off: a drone with no onsets at all is taken for the room within
+about 20 s. A test plays three minutes of record through the room and
+checks the third minute reads like the first (an earlier version, with a
+single faster creep rate and frame-level presence, lost most of the
+record's volume and its onset gate within a minute).
+
+`RoomSim` (`audio/synth.rs`, `--room-sim`) is the test bench: the synth
+track 30 dB down, two 150 Hz high-passes, four early reflections, rumble
+and hiss at about 20 dB SNR, all scaled by a mic gain. The tests run it at
+−20, 0 and +20 dB and check that the untuned failure is real, that tuned
+it locks 124 BPM with moving bands, that an empty room stays dark with no
+beats at every gain, that quiet and hot mics hear the same record, and
+that a long record doesn't fade into the room.
+`room_report` (ignored; `cargo test --release room_report -- --ignored
+--nocapture`) prints the numbers behind them. The HUD's stats panel shows
+the gain and floor, "learning the room…", or "no signal — is the mic
+muted?" after 1 s of digital zeros.
 
 ## `AudioFeatures`: CPU snapshot and GPU layout
 
@@ -136,6 +211,10 @@ aren't filterable without an optional feature.
   is per second. The composite mask carries `k` too, so per-frame additive
   energy scales with frame time. Result: the same trails and brightness at
   60 and 144 Hz (unit-tested).
+- Scene time runs at `speed` × real time (`Renderer::set_look`; 1 outside
+  frame mode). Because every motion, decay, particle step and transition
+  goes through `dt`, a slower `speed` is true slow motion with the same
+  equilibrium brightness. The HUD keeps real time.
 
 ## Render pass graph
 
@@ -274,15 +353,54 @@ for `.toml`/`.wgsl`. `PresetLibrary::poll_reloads` debounces per path
   beat, and only on a 4-beat boundary when tempo confidence ≥ 0.4; always
   change at `max_interval` (so silence still advances). Lock (L) pauses it.
 - `config.rs`: `seoul.toml` sections `[auto]`, `[transition]`, `[post]`
-  (global look defaults), `[hud]`, plus start preset, fullscreen/monitor,
-  render scale. CLI flags override.
+  (global look defaults), `[hud]`, `[audio]`, `[frame]`, `[link]`, plus
+  start preset, fullscreen/monitor, render scale. CLI flags override.
+- `LibrarySettings::favorites_only` (frame mode's default playlist) makes
+  `visible()` admit only favorites, once any exist, so Space, R and
+  auto-advance all keep to them.
+
+## Frame mode
+
+`--frame` or `[frame] enabled` turns Seoul into a picture on the wall:
+borderless fullscreen with no cursor, the 서울 wordmark at startup and
+then no HUD (`Hud::wordmark_only`; F1 still works), auto-advance forced
+on, favorites as the playlist. `frame.rs` holds the logic, pure and
+unit-tested:
+
+- **`MoodTracker`** reads the analysed features each frame. *Resting*:
+  nothing above `volume` 0.15 for 4 s. *Playing*: music for 2 s, where
+  music is any of: 4 s of unbroken sound (no gap of 0.15 s; talk breaks
+  between phrases every 1–3 s, a record doesn't), sound ~90% of the last
+  ~8 s, a confident tempo with recent beats, or a live, playing Soba link.
+  It stops 5 s after the evidence does. *Listening*: anything else.
+- **`FrameMode`** eases a `Look` toward each mood — resting: speed 0.25,
+  exposure 0.4, presets hear nothing; listening: 0.5, 0.65, they hear the
+  music at 35% and no beats (drum ages read 1000, so hit-triggered effects
+  stay still); playing: everything at 1 — waking over ~1.5 s and settling
+  over ~6 s. From `night` it adds a warm grade (`PostUniforms::warmth`,
+  over ~60 s) and ×0.75 exposure; from `sleep` to `wake` it fades to black
+  (τ 10 s) unless music is playing, and the render loop drops to a few
+  frames a second once dark. The first frame snaps to the hour, so a frame
+  switched on at 2 am starts dark.
+- The time of day is local (`chrono`), or `--clock HH:MM` from there on.
+  Recordings default to noon, so they repeat.
+
+`--evening` plays a scripted room for testing it (`TestTrack::evening`):
+empty, then 20 s of `Talk` (formant-filtered glottal pulses in phrases of
+4–11 syllables with pauses between, so it has speech's rhythm and gaps),
+then the record from its first bar, then empty. A test runs it through
+the room-tuned analyzer and asserts each stretch's mood; `mood_report`
+(ignored) prints the timeline and the longest unbroken run during talk
+(2.2 s against the 4 s threshold).
 
 ## HUD
 
 `render/hud.rs` draws after tonemapping, so it never blooms. Text is
-glyphon/cosmic-text over fonts loaded straight from `C:\Windows\Fonts`
-(Bahnschrift, Malgun Gothic for Hangul, Consolas), with a full system scan
-as a fallback. Text buffers re-shape only when their content changes;
+glyphon/cosmic-text over fonts loaded straight from the OS's font folder
+(`render/hud.rs::os`): Bahnschrift, Malgun Gothic for Hangul and Consolas
+on Windows; Avenir Next, Apple SD Gothic Neo and Menlo on macOS; Noto Sans,
+Noto Sans CJK and DejaVu Sans Mono on Linux. A full system scan is the
+fallback. Text buffers re-shape only when their content changes;
 panels and meters are instanced SDF rounded rects (`shaders/hud.wgsl`)
 with premultiplied blending. Elements: startup 서울 wordmark, preset toasts
 (palette-colored accent, drop shadow), key notices, help (H), stats (F1:
@@ -299,7 +417,17 @@ the HUD (the post and HUD passes are re-run offscreen for the last frame).
 - `--tour SECS [--tour-shots N] [--preset filter]`: hard-cut through
   presets, screenshot each into `screenshots/tour/`, exit. The HUD is
   disabled for clean frames.
+- `--bench SECS [--preset filter]`: the tour's route, timing frames
+  instead (`bench.rs`). Vsync is off (`PresentMode::AutoNoVsync`) so the
+  numbers show headroom; the first second on each preset isn't counted.
+  It logs each preset's fps and its slowest one-second window, and saves a
+  CSV, slowest first, to `screenshots/bench/`. A preset "holds 60" when its
+  slowest window does. Single frame times mislead here: with vsync off the
+  GPU queue fills and drains, so frames arrive in fast/slow pairs.
 - `--screenshot-at SECS`, `P`: PNG of the current frame.
+- `--room-sim`, `--evening`: the synth through a simulated room mic, or a
+  scripted evening of empty room, talk and a record; `--frame --clock
+  HH:MM` previews frame mode at any hour.
 
 ## Invariants checklist
 

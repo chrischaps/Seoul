@@ -45,13 +45,18 @@ pub struct Renderer {
     surface_format: wgpu::TextureFormat,
     output_size: (u32, u32),
     render_scale: f32,
-    start_time: Instant,
     last_render_time: Option<Instant>,
     frame: u64,
     /// Offline rendering: advance exactly this much per frame instead of
     /// following the wall clock.
     fixed_dt: Option<f32>,
-    sim_time: f32,
+    /// Scene time: advances by dt × `speed`, so frame mode's rest is slow
+    /// motion for presets, feedback, particles and transitions alike.
+    scene_time: f32,
+    speed: f32,
+    /// Frame mode's exposure multiplier and night warmth (0..1).
+    exposure: f32,
+    warmth: f32,
 }
 
 impl Renderer {
@@ -120,12 +125,26 @@ impl Renderer {
             surface_format: ctx.config.format,
             output_size,
             render_scale: opts.render_scale,
-            start_time: Instant::now(),
             last_render_time: None,
             frame: 0,
             fixed_dt: None,
-            sim_time: 0.0,
+            scene_time: 0.0,
+            speed: 1.0,
+            exposure: 1.0,
+            warmth: 0.0,
         })
+    }
+
+    /// Frame mode's look: scene speed, an exposure multiplier and the
+    /// night warmth. All 1, 1, 0 outside frame mode.
+    pub fn set_look(&mut self, speed: f32, exposure: f32, warmth: f32) {
+        self.speed = speed.max(0.0);
+        self.exposure = exposure.max(0.0);
+        self.warmth = warmth.clamp(0.0, 1.0);
+    }
+
+    pub fn render_scale(&self) -> f32 {
+        self.render_scale
     }
 
     pub fn library(&self) -> &PresetLibrary {
@@ -182,19 +201,16 @@ impl Renderer {
         // The render thread owns the clock: audio analysis can stall (WASAPI
         // loopback sends nothing during silence) but visuals must keep moving.
         let now = Instant::now();
-        let (dt, time) = match self.fixed_dt {
-            Some(step) => {
-                self.sim_time += step;
-                (step, self.sim_time)
-            }
-            None => {
-                let dt = match self.last_render_time.replace(now) {
-                    Some(prev) => (now - prev).as_secs_f32().min(0.1),
-                    None => 1.0 / 60.0,
-                };
-                (dt, (now - self.start_time).as_secs_f32())
-            }
+        let real_dt = match self.fixed_dt {
+            Some(step) => step,
+            None => match self.last_render_time.replace(now) {
+                Some(prev) => (now - prev).as_secs_f32().min(0.1),
+                None => 1.0 / 60.0,
+            },
         };
+        let dt = real_dt * self.speed;
+        self.scene_time += dt;
+        let time = self.scene_time;
         let (fw, fh) = self.feedback.size();
         let mut f = *features;
         f.time = time;
@@ -213,7 +229,9 @@ impl Renderer {
 
         self.history.update(&ctx.queue, &mut f);
         ctx.queue.write_buffer(&self.audio_buf, 0, bytemuck::bytes_of(&f));
-        self.post.update(&ctx.queue, &plan.post, f.time, f.beat, self.output_size);
+        let mut post = plan.post;
+        post.exposure *= self.exposure;
+        self.post.update(&ctx.queue, &post, self.warmth, f.time, f.beat, self.output_size);
         let warp_draws: Vec<WarpDraw> = plan
             .warps
             .iter()
@@ -296,7 +314,8 @@ impl Renderer {
             transition: lib.transition_progress(),
             error: lib.last_error(),
         };
-        self.hud.prepare(&ctx.device, &ctx.queue, self.output_size, dt, &input);
+        // The HUD keeps real time: toasts don't crawl while the scene rests.
+        self.hud.prepare(&ctx.device, &ctx.queue, self.output_size, real_dt, &input);
         self.hud.render(&mut encoder, swap_view);
 
         ctx.queue.submit(Some(encoder.finish()));
