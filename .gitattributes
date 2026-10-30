@@ -1,1 +1,2 @@
 scripts/issue*.sh text eol=lf
+packaging/*.sh text eol=lf

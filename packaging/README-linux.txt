@@ -42,6 +42,29 @@ KEYS
   to quit.
 
 
+ON A RASPBERRY PI 5
+
+  The aarch64 build runs on a Pi 5 with Raspberry Pi OS. Draw the
+  feedback at half resolution: on the 7" Touch Display 2, about
+  half the presets hold 60 fps that way, and none do at full size.
+
+    ./seoul --frame --mic --render-scale 0.5
+
+  or set  render_scale = 0.5  in seoul.toml.
+
+
+RELEASES AND CHECKSUMS
+
+  Every release carries SHA256SUMS. To check a download:
+
+    sha256sum -c SHA256SUMS --ignore-missing
+
+  Easel, the frame's launcher, installs Seoul from these releases
+  and checks the same file. It sees only published releases:
+  GitHub hides drafts from its API, so a tagged build reaches the
+  frame only when someone writes its notes and publishes it.
+
+
 REQUIREMENTS
 
   64-bit Linux (x86_64 or aarch64) with glibc 2.36 or newer

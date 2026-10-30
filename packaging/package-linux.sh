@@ -10,7 +10,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+# tr: a Windows checkout mounted into the build box has CRLF line endings.
+version=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
 arch=${1:-$(uname -m)}
 if [ "$arch" = "$(uname -m)" ]; then
     cargo build --release --target-dir target/linux
