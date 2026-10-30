@@ -21,6 +21,8 @@ struct CurationFile {
 pub struct Curation {
     path: Option<PathBuf>,
     data: CurationFile,
+    /// A change the file doesn't have yet (its save failed).
+    dirty: bool,
 }
 
 impl Curation {
@@ -37,17 +39,30 @@ impl Curation {
         Self {
             path: Some(path.to_path_buf()),
             data,
+            dirty: false,
         }
     }
 
-    fn save(&self) {
+    /// Written whole or not at all, so a kill mid-save can't truncate it.
+    fn save(&mut self) {
         let Some(path) = &self.path else {
             return;
         };
         let text = toml::to_string_pretty(&self.data).unwrap_or_default();
         let header = "# Written by Seoul: F toggles a favorite, X hides a preset.\n";
-        if let Err(e) = std::fs::write(path, format!("{header}{text}")) {
-            warn!("could not save {}: {e}", path.display());
+        self.dirty = match crate::places::write_atomic(path, format!("{header}{text}").as_bytes()) {
+            Ok(()) => false,
+            Err(e) => {
+                warn!("could not save {}: {e}", path.display());
+                true
+            }
+        };
+    }
+
+    /// On the way out: one more try at a change whose save failed.
+    pub fn flush(&mut self) {
+        if self.dirty {
+            self.save();
         }
     }
 
@@ -169,5 +184,20 @@ mod tests {
         assert!(!c.is_favorite("Ink"));
         assert!(c.toggle_hidden("Plasma"));
         assert!(c.is_hidden("Plasma"));
+    }
+
+    #[test]
+    fn a_favorite_is_on_disk_as_soon_as_it_is_set() {
+        let dir = std::env::temp_dir().join(format!("seoul-curation-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(STATE_PATH);
+        let mut c = Curation::load(&path);
+        c.toggle_favorite("Ink");
+        c.toggle_hidden("Plasma");
+        // A kill now loses nothing: a fresh load sees both.
+        let again = Curation::load(&path);
+        assert!(again.is_favorite("Ink") && again.is_hidden("Plasma"));
+        assert!(!dir.join("seoul-state.toml.tmp").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

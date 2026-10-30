@@ -20,7 +20,7 @@ use crate::render::hud::{Hud, HudInput};
 use crate::render::mask::{MaskPass, MaskSlot};
 use crate::render::particles::{ParticleFrame, ParticleSystem};
 use crate::render::post::PostPass;
-use crate::render::screenshot::CaptureTarget;
+use crate::render::screenshot::{self, CaptureTarget};
 use crate::render::warp::{WarpDraw, WarpLayouts, WarpPass};
 
 pub struct RendererOptions {
@@ -336,5 +336,21 @@ impl Renderer {
         self.hud.render(&mut encoder, &target.view);
         ctx.queue.submit(Some(encoder.finish()));
         target.save_png(&ctx.device, &ctx.queue, path)
+    }
+
+    /// The picture just drawn, without the HUD, cropped and shrunk to `size`
+    /// (a launcher's card). Written whole, so a reader never sees half a PNG.
+    pub fn thumbnail(&self, ctx: &RenderContext, path: &Path, size: (u32, u32)) -> Result<()> {
+        let target = CaptureTarget::new(&ctx.device, self.surface_format, self.output_size);
+        let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("seoul.thumbnail"),
+        });
+        self.post.render(&mut encoder, &target.view, self.feedback.read_index());
+        ctx.queue.submit(Some(encoder.finish()));
+        let pixels = screenshot::cover(&target.read_rgba(&ctx.device, &ctx.queue)?, self.output_size, size);
+        let mut png = Vec::new();
+        screenshot::write_png(&mut png, size.0, size.1, &pixels)?;
+        crate::places::write_atomic(path, &png)?;
+        Ok(())
     }
 }

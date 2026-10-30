@@ -1,5 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -17,6 +18,7 @@ mod bench;
 mod cli;
 mod config;
 mod frame;
+mod places;
 mod preset;
 mod render;
 mod touch;
@@ -244,7 +246,15 @@ struct App {
     exit_requested: bool,
     modifiers: ModifiersState,
     touches: Touches,
+    /// Where `seoul-state.toml` lives (empty: the working folder).
+    settings: PathBuf,
 }
+
+/// SIGTERM or SIGINT (Ctrl+C on Windows), from the signal thread.
+struct QuitSignal;
+
+/// The Easel launcher's mat shows each app as a card this size.
+const THUMB_SIZE: (u32, u32) = (640, 360);
 
 impl App {
     fn render(&mut self) {
@@ -479,9 +489,28 @@ frame  {}", fm.status());
         window.set_cursor_visible(!self.fullscreen);
     }
 
+    /// Every way out comes through here: Esc, closing the window, two
+    /// fingers, a finished batch run, and a supervisor's SIGTERM.
+    fn quit(&mut self, event_loop: &ActiveEventLoop) {
+        if event_loop.exiting() {
+            return;
+        }
+        if let Some(r) = self.renderer.as_mut() {
+            r.library_mut().flush_curation();
+        }
+        if let (Some(dir), Some(ctx), Some(r)) = (places::easel_data(), self.ctx.as_ref(), self.renderer.as_ref()) {
+            let path = dir.join("thumb.png");
+            match r.thumbnail(ctx, &path, THUMB_SIZE) {
+                Ok(()) => info!(path = %path.display(), "thumbnail saved"),
+                Err(e) => warn!("thumbnail failed: {e:#}"),
+            }
+        }
+        event_loop.exit();
+    }
+
     fn on_key(&mut self, event_loop: &ActiveEventLoop, kc: KeyCode) {
         match kc {
-            KeyCode::Escape => return event_loop.exit(),
+            KeyCode::Escape => return self.quit(event_loop),
             KeyCode::F11 => return self.toggle_fullscreen_on(self.config.monitor, event_loop),
             // The Mac convention, since F11 is usually a media key there.
             KeyCode::KeyF
@@ -568,7 +597,12 @@ frame  {}", fm.status());
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<QuitSignal> for App {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, _: QuitSignal) {
+        info!("asked to quit");
+        self.quit(event_loop);
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -591,7 +625,7 @@ impl ApplicationHandler for App {
         let opts = RendererOptions {
             render_scale: self.args.render_scale.unwrap_or(self.config.render_scale),
             library: library_settings(&self.config, &self.args),
-            curation: Curation::load(&PathBuf::from(STATE_PATH)),
+            curation: Curation::load(&self.settings.join(STATE_PATH)),
             ui_scale: window.scale_factor(),
         };
         let mut renderer = Renderer::new(&ctx, &PathBuf::from("presets"), opts).expect("failed to load presets");
@@ -674,7 +708,7 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => self.quit(event_loop),
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(r) = self.renderer.as_mut() {
@@ -718,14 +752,14 @@ impl ApplicationHandler for App {
                 };
                 match gesture {
                     Some(Gesture::Tap) => self.on_key(event_loop, KeyCode::Space),
-                    Some(Gesture::TwoFingerTap) => event_loop.exit(),
+                    Some(Gesture::TwoFingerTap) => self.quit(event_loop),
                     None => {}
                 }
             }
             WindowEvent::RedrawRequested => {
                 self.render();
                 if self.exit_requested {
-                    event_loop.exit();
+                    self.quit(event_loop);
                 }
             }
             _ => {}
@@ -744,52 +778,6 @@ fn release_own_console() {
     if unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) } == 1 {
         unsafe { FreeConsole() };
     }
-}
-
-/// Presets, settings, favorites and screenshots are relative paths. Launched
-/// from elsewhere (a shortcut, a file manager, Finder), work from the exe's
-/// folder, or on macOS from the app's support folder.
-fn settle_working_dir() {
-    if Path::new("presets").is_dir() {
-        return;
-    }
-    let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) else {
-        return;
-    };
-    #[cfg(target_os = "macos")]
-    let exe_dir = mac_support_dir(&exe_dir).unwrap_or(exe_dir);
-    if exe_dir.join("presets").is_dir() {
-        info!(dir = %exe_dir.display(), "working from the app's folder");
-        let _ = std::env::set_current_dir(exe_dir);
-    }
-}
-
-/// Inside Seoul.app the presets ship in Contents/Resources, which is
-/// read-only in spirit (writing there breaks the signature) and sometimes in
-/// fact (a downloaded app can run from a randomized read-only copy). Work
-/// from ~/Library/Application Support/Seoul instead, seeded from the bundle.
-/// Files already there are left alone, so edits survive updates and new
-/// presets still arrive.
-#[cfg(target_os = "macos")]
-fn mac_support_dir(exe_dir: &Path) -> Option<PathBuf> {
-    let resources = exe_dir.parent()?.join("Resources");
-    if !resources.join("presets").is_dir() {
-        return None;
-    }
-    let home = PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support/Seoul");
-    std::fs::create_dir_all(home.join("presets")).ok()?;
-    let copy_missing = |from: &Path, to: &Path| {
-        if !to.exists()
-            && let Err(e) = std::fs::copy(from, to)
-        {
-            warn!("couldn't copy {} into {}: {e}", from.display(), to.display());
-        }
-    };
-    for entry in std::fs::read_dir(resources.join("presets")).ok()?.flatten() {
-        copy_missing(&entry.path(), &home.join("presets").join(entry.file_name()));
-    }
-    copy_missing(&resources.join("seoul.toml"), &home.join("seoul.toml"));
-    Some(home)
 }
 
 /// Write a finished `--bench` to screenshots/bench/ and log its verdict.
@@ -827,9 +815,12 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     info!(version = env!("CARGO_PKG_VERSION"), "seoul starting");
-    settle_working_dir();
+    let settings = places::settle();
 
-    let config_path = PathBuf::from(args.config.as_deref().unwrap_or(config::DEFAULT_PATH));
+    let config_path = match &args.config {
+        Some(path) => PathBuf::from(path),
+        None => settings.join(config::DEFAULT_PATH),
+    };
     let config = match Config::load(&config_path) {
         Ok(c) => c,
         Err(e) => {
@@ -893,8 +884,20 @@ fn main() -> Result<()> {
         audio::synth::spawn_fake_link(port);
     }
 
-    let event_loop = EventLoop::new()?;
+    let event_loop = EventLoop::<QuitSignal>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
+
+    // A supervisor's SIGTERM (or Ctrl+C) quits like Esc, saving first. A
+    // second one, or one after the loop has gone, doesn't wait.
+    let proxy = event_loop.create_proxy();
+    let asked = AtomicBool::new(false);
+    if let Err(e) = ctrlc::set_handler(move || {
+        if asked.swap(true, Ordering::Relaxed) || proxy.send_event(QuitSignal).is_err() {
+            std::process::exit(1);
+        }
+    }) {
+        warn!("can't catch SIGTERM: {e}");
+    }
 
     let mut app = App {
         screenshot_at: args.screenshot_at,
@@ -919,6 +922,7 @@ fn main() -> Result<()> {
         exit_requested: false,
         modifiers: ModifiersState::empty(),
         touches: Touches::default(),
+        settings,
     };
 
     event_loop.run_app(&mut app)?;

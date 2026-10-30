@@ -19,6 +19,7 @@ invariants that keep it all consistent. For writing presets, see
 - [Hot reload](#hot-reload)
 - [Curation, auto-advance, config](#curation-auto-advance-config)
 - [Frame mode](#frame-mode)
+- [Files and quitting](#files-and-quitting)
 - [HUD](#hud)
 - [Verification tooling](#verification-tooling)
 - [Invariants checklist](#invariants-checklist)
@@ -392,6 +393,35 @@ then the record from its first bar, then empty. A test runs it through
 the room-tuned analyzer and asserts each stretch's mood; `mood_report`
 (ignored) prints the timeline and the longest unbroken run during talk
 (2.2 s against the 4 s threshold).
+
+## Files and quitting
+
+`places.rs` decides where files live. Presets, shaders and screenshots are
+relative to the working folder: the current one if it has `presets/`, else
+the exe's folder (on macOS, `~/Library/Application Support/Seoul`, seeded
+from the bundle). The settings, `seoul.toml` and `seoul-state.toml`, live in
+a settings folder that replacing the install can't reach:
+
+- `$EASEL_DATA` if set, on any platform (the Easel launcher's per-app folder);
+- else, on Linux running from an install (the working folder is the exe's),
+  `$XDG_CONFIG_HOME/seoul` or `~/.config/seoul`;
+- else the working folder, as before (a source checkout, Windows, macOS).
+
+On first use the settings folder is seeded from the install: the shipped
+`seoul.toml`, and a `seoul-state.toml` an older version kept beside the
+presets. Files already there are never overwritten. `--config` still names
+a file directly.
+
+Every way out goes through `App::quit`: Esc, closing the window, the
+two-finger tap, a finished batch run, and SIGTERM/SIGINT. A `ctrlc` thread
+(Ctrl+C and console close on Windows) wakes the event loop with a
+`QuitSignal` user event, so a supervisor's SIGTERM quits like Esc; a second
+signal exits at once. `quit` retries a favorite or hide whose save failed,
+and with `$EASEL_DATA` set writes the last frame, without the HUD, to
+`thumb.png` at 640 × 360 (the middle of a portrait frame, box-filtered;
+`screenshot::cover`). Favorites are written the moment they change, and
+`places::write_atomic` (temp file, fsync, rename) means a kill mid-save
+leaves the old file, never a truncated one.
 
 ## HUD
 

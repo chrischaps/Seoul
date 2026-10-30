@@ -24,6 +24,7 @@ png = "0.18.1"
 glyphon = "0.12"
 rosc = "0.11.4"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+ctrlc = { version = "3.5.2", features = ["termination"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }

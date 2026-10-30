@@ -25,6 +25,15 @@ GETTING STARTED
   asleep from 11 pm to 7 am. [frame] in seoul.toml sets the hours.
 
 
+SETTINGS
+
+  The first run copies seoul.toml into ~/.config/seoul (or
+  $XDG_CONFIG_HOME/seoul), and Seoul reads it from there, along with
+  your favorites and hidden presets (seoul-state.toml). A new
+  release can replace this folder without losing them. Seoul quits
+  cleanly on SIGTERM, so it can run under systemd or a launcher.
+
+
 KEYS
 
   Space / Backspace   next / previous preset
