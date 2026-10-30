@@ -546,6 +546,11 @@ impl PresetLibrary {
         self.curation.toggle_favorite(&name)
     }
 
+    /// Before quitting: write any favorite or hide that didn't save.
+    pub fn flush_curation(&mut self) {
+        self.curation.flush();
+    }
+
     /// Hide (or unhide) the current preset. Hiding moves on immediately.
     pub fn toggle_hidden(&mut self) -> bool {
         let name = self.current_name().to_owned();

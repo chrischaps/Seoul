@@ -9,7 +9,8 @@ USAGE:
     seoul [OPTIONS]
 
 OPTIONS:
-    --config <PATH>         Settings file (default: seoul.toml)
+    --config <PATH>         Settings file (default: seoul.toml in the settings
+                            folder; on Linux, ~/.config/seoul for an install)
     --synth                 Use the built-in test track instead of system audio
     --mic                   Listen to the default microphone instead of system audio
     --input <NAME>          Listen to the first input device whose name contains NAME

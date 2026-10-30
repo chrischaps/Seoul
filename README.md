@@ -27,9 +27,10 @@ keeps its presets, settings and screenshots in
 **Linux (x86_64 or aarch64, glibc 2.36+):** untar the release and run
 `./seoul --mic`. Linux has no system-audio loopback, so Seoul listens to an
 input. Under PulseAudio or PipeWire, `--input monitor` hears what the
-computer is playing. The aarch64 build is for the Raspberry Pi 5. The HUD
-uses the Noto and DejaVu fonts (`fonts-noto-core fonts-noto-cjk
-fonts-dejavu-core` on Debian and Ubuntu).
+computer is playing. Settings and favorites live in `~/.config/seoul`, so a
+new release can replace the folder. The aarch64 build is for the Raspberry
+Pi 5. The HUD uses the Noto and DejaVu fonts (`fonts-noto-core
+fonts-noto-cjk fonts-dejavu-core` on Debian and Ubuntu).
 
 | Key | |
 |---|---|

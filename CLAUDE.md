@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback (or a microphone / line-in, with room tuning), extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `main.rs::mac_support_dir`). Linux (x86_64, and aarch64 for the Raspberry Pi 5 frame) builds in a Debian bookworm Docker box; it has no loopback, so it listens to inputs.
+`seoul` is a MilkDrop-inspired real-time audio visualizer in Rust (wgpu 30, cpal 0.18, winit 0.30). It captures desktop audio via WASAPI loopback (or a microphone / line-in, with room tuning), extracts features (AGC'd bands, beats, tempo, spectrum, waveform), and renders feedback-driven HDR shader visuals. Presets are hot-reloadable TOML + WGSL. Developed on Windows (WASAPI); macOS 14.6+ builds in CI but is untested on hardware (CoreAudio process-tap loopback, OS fonts per platform in `render/hud.rs::os`, bundle paths in `places.rs::mac_support_dir`). Linux (x86_64, and aarch64 for the Raspberry Pi 5 frame) builds in a Debian bookworm Docker box; it has no loopback, so it listens to inputs.
 
 Deeper docs: `docs/ARCHITECTURE.md` (threads, analysis math, pass graph, transitions, invariants) and `docs/PRESETS.md` (authoring guide).
 
@@ -42,7 +42,7 @@ git tag vX.Y.Z && git push --tags  # CI (.github/workflows/build.yml) drafts a r
 
 Keys: Space/Backspace next/prev · R shuffle · A auto-advance · L lock · F favorite · X hide · 1–9 favorites · H help · F1 stats · P screenshot · F11 fullscreen · Esc quit. Touch (`touch.rs`): tap = next, two-finger tap = quit.
 
-Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-state.toml` (gitignored).
+Settings: `seoul.toml` (hot-reloads; CLI overrides). Favorites/hidden: `seoul-state.toml` (gitignored). Both live in the working folder, except under `$EASEL_DATA` or a Linux install (`~/.config/seoul`); see `places.rs`. SIGTERM/SIGINT quit through `App::quit`, like Esc.
 
 ## Architecture in brief
 
